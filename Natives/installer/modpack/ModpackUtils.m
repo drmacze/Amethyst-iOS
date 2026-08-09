@@ -1,16 +1,50 @@
 #import "installer/FabricUtils.h"
 #import "ModpackUtils.h"
 
+static NSString * const EnhancedModpackErrorDomain = @"dev.amethyst.enhanced.modpack";
+
+static void EnhancedSetModpackError(NSError *__autoreleasing *error, NSString *message) {
+    if (!error) return;
+    *error = [NSError errorWithDomain:EnhancedModpackErrorDomain
+                                 code:400
+                             userInfo:@{NSLocalizedDescriptionKey: message ?: @"Invalid modpack path"}];
+}
+
+static BOOL EnhancedSafeDestination(NSString *relative, NSString *root, NSString **destination) {
+    if (![relative isKindOfClass:NSString.class] || relative.length == 0) return NO;
+    if ([relative hasPrefix:@"/"] || [relative hasPrefix:@"~"]) return NO;
+
+    NSArray<NSString *> *components = relative.pathComponents;
+    if ([components containsObject:@".."] || [components containsObject:@"~"]) return NO;
+
+    NSString *standardRoot = root.stringByStandardizingPath;
+    NSString *rootPrefix = [standardRoot stringByAppendingString:@"/"];
+    NSString *standardDestination = [[standardRoot stringByAppendingPathComponent:relative] stringByStandardizingPath];
+    if (![standardDestination hasPrefix:rootPrefix]) return NO;
+
+    if (destination) *destination = standardDestination;
+    return YES;
+}
+
 @implementation ModpackUtils
 
 + (void)archive:(UZKArchive *)archive extractDirectory:(NSString *)dir toPath:(NSString *)path error:(NSError *__autoreleasing*)error {
+    NSString *archivePrefix = [dir stringByAppendingString:@"/"];
     [archive performOnFilesInArchive:^(UZKFileInfo *fileInfo, BOOL *stop) {
-        if (![fileInfo.filename hasPrefix:dir] ||
-            fileInfo.filename.length <= dir.length) {
+        NSString *archiveName = fileInfo.filename;
+        if (![archiveName isKindOfClass:NSString.class] || ![archiveName hasPrefix:archivePrefix] ||
+            archiveName.length <= archivePrefix.length) {
             return;
         }
-        NSString *fileName = [fileInfo.filename substringFromIndex:dir.length+1];
-        NSString *destItemPath = [path stringByAppendingPathComponent:fileName];
+
+        NSString *relative = [archiveName substringFromIndex:archivePrefix.length];
+        NSString *destItemPath = nil;
+        if (!EnhancedSafeDestination(relative, path, &destItemPath)) {
+            EnhancedSetModpackError(error, [NSString stringWithFormat:@"Unsafe path blocked in modpack archive: %@", archiveName]);
+            *stop = YES;
+            return;
+        }
+
         NSString *destDirPath = fileInfo.isDirectory ? destItemPath : destItemPath.stringByDeletingLastPathComponent;
         BOOL createdDir = [NSFileManager.defaultManager createDirectoryAtPath:destDirPath
             withIntermediateDirectories:YES
@@ -23,10 +57,10 @@
         }
 
         NSData *data = [archive extractData:fileInfo error:error];
-        BOOL written = [data writeToFile:destItemPath options:NSDataWritingAtomic error:error];
+        BOOL written = data && [data writeToFile:destItemPath options:NSDataWritingAtomic error:error];
         *stop = !data || !written;
         if (!*stop) {
-            NSLog(@"[ModpackDL] Extracted %@", fileInfo.filename);
+            NSLog(@"[ModpackDL] Extracted %@", archiveName);
         }
     } error:error];
 }
