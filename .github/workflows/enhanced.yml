@@ -97,6 +97,9 @@ jobs:
       - name: Apply Enhanced v4 adaptive performance policy
         run: python3 scripts/patch_v4_performance.py
 
+      - name: Apply Enhanced v4 Smart Settings engine
+        run: python3 scripts/patch_v4_smart_settings.py
+
       - name: Apply Enhanced v4 dual-LWJGL selector
         run: python3 scripts/patch_v4_lwjgl_runtime.py
 
@@ -114,6 +117,11 @@ jobs:
           grep -n "EnhancedPerformance" Natives/JavaLauncher.m
           grep -n "performance_profile" Natives/PLPreferences.m Natives/LauncherPreferencesViewController.m
           grep -n "thermal_governor" Natives/PLPreferences.m Natives/LauncherPreferencesViewController.m
+          grep -n "smart_settings" Natives/PLPreferences.m Natives/LauncherPreferencesViewController.m
+          grep -n "EnhancedSmartSettings.m" Natives/CMakeLists.txt
+          grep -n "runAutomaticScanIfNeededFrom" Natives/SceneDelegate.m Natives/EnhancedSmartSettings.m
+          grep -n "recommendedResolutionFor" Natives/EnhancedSmartSettings.m
+          grep -n '"-framework Metal"' Natives/CMakeLists.txt
           grep -n "EnhancedRuntime" Natives/JavaLauncher.m
           grep -n "EnhancedMemory" Natives/JavaLauncher.m
           grep -n "performPendingRendererCacheCleanup" Natives/JavaLauncher.m
