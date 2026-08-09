@@ -4,8 +4,9 @@
 v3 keeps the rebasing-friendly build-time patch model from v2, but shifts the
 priority toward sustained A13 performance and repeat-launch behaviour:
 MobileGlues 2.x Release/ThinLTO + A13 codegen, headroom-aware Auto RAM, a
-profile-writable/versioned MobileGlues state directory so the GLSL cache can
-actually persist on iOS, and MobileGlues as the Enhanced Auto renderer.
+launcher-writable/versioned MobileGlues state directory so the GLSL cache can
+persist safely across profiles on iOS, and MobileGlues as the Enhanced Auto
+renderer.
 """
 
 from pathlib import Path
@@ -127,18 +128,21 @@ new_ram = '''    int allocmem;
 require(old_ram in java or "[EnhancedMemory]" in java, "Auto RAM block no longer matches expected upstream code")
 java = java.replace(old_ram, new_ram, 1)
 
-# MobileGlues defaults its data directory to /sdcard/MG. That is an Android path
-# and is not writable inside a normal iOS sandbox. In v2 that meant the renderer
-# could run, but its disk GLSL cache/config/stats path could fail before the JVM
-# even reached Minecraft. Give each Minecraft profile a writable, versioned MG
-# state directory. Versioning is deliberate: the cache key is the source shader,
-# not the MobileGlues translator version, so a future renderer upgrade must not
-# reuse stale translated output. Respect an explicit user MG_DIR_PATH override.
+# MobileGlues defaults its state directory to /sdcard/MG. That is an Android
+# path and is not writable inside a normal iOS sandbox. Give Enhanced a stable,
+# launcher-global state directory under POJAV_HOME instead. A global renderer
+# cache is intentional: translated shader output is keyed by source and can be
+# reused by multiple profiles using the same pinned renderer, while a profile
+# switch in the same launcher process must not leave MG_DIR_PATH pointing at the
+# first profile. The directory is versioned because the cache file itself has no
+# translator-version header. Respect an explicit user MG_DIR_PATH override.
 mg_anchor = '''    NSLog(@"[JavaLauncher] Looking for Java %d or later", minVersion);
 '''
 mg_block = f'''    const char *existingMGDir = getenv("MG_DIR_PATH");
     if (existingMGDir == NULL || existingMGDir[0] == '\\0') {{
-        NSString *mgDir = [[[gameDir stringByAppendingPathComponent:@".amethyst"]
+        const char *pojavHomeC = getenv("POJAV_HOME");
+        NSString *pojavHome = pojavHomeC ? @(pojavHomeC) : gameDir;
+        NSString *mgDir = [[[pojavHome stringByAppendingPathComponent:@".amethyst"]
             stringByAppendingPathComponent:@"mobileglues"] stringByAppendingPathComponent:@"{MG_STATE_VERSION}"];
         NSError *mgDirError = nil;
         if ([fm createDirectoryAtPath:mgDir withIntermediateDirectories:YES attributes:nil error:&mgDirError]) {{
@@ -151,7 +155,7 @@ mg_block = f'''    const char *existingMGDir = getenv("MG_DIR_PATH");
             NSLog(@"[EnhancedRenderer] Could not create MobileGlues state directory %@: %@", mgDir, mgDirError.localizedDescription);
         }}
     }} else {{
-        NSLog(@"[EnhancedRenderer] Respecting custom MG_DIR_PATH=%s", existingMGDir);
+        NSLog(@"[EnhancedRenderer] Respecting existing MG_DIR_PATH=%s", existingMGDir);
     }}
 
 '''
@@ -220,7 +224,7 @@ print("Prepared Amethyst Enhanced v3 build:")
 print("  - MobileGlues 2.x Release/ThinLTO + AppleClang -O3 path")
 print(f"  - native A13 codegen target: {CPU_TARGET}")
 print("  - headroom-aware iOS Auto RAM policy")
-print(f"  - writable/versioned MobileGlues state + persistent GLSL cache ({MG_STATE_VERSION})")
+print(f"  - launcher-global/versioned MobileGlues state + persistent GLSL cache ({MG_STATE_VERSION})")
 print("  - Auto renderer -> MobileGlues")
 print("  - thermal / Low Power Mode launch diagnostics")
 print("  - Content Hub ARC-safe world extraction")
