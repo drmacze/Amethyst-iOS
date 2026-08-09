@@ -1,4 +1,5 @@
 #import "EnhancedCacheManager.h"
+#include <stdlib.h>
 
 static NSString *AEHome(void) {
     const char *home = getenv("POJAV_HOME");
@@ -100,7 +101,9 @@ static BOOL AEDeleteLauncherCache(NSError **outError) {
     NSError *firstError = nil;
     NSArray<NSString *> *paths = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES);
     for (NSString *root in paths) {
-        NSArray<NSString *> *children = [fm contentsOfDirectoryAtPath:root error:&firstError];
+        NSError *listError = nil;
+        NSArray<NSString *> *children = [fm contentsOfDirectoryAtPath:root error:&listError];
+        if (listError && !firstError) firstError = listError;
         for (NSString *child in children ?: @[]) {
             NSError *error = nil;
             [fm removeItemAtPath:[root stringByAppendingPathComponent:child] error:&error];
