@@ -1,0 +1,96 @@
+name: Amethyst Enhanced A13
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'enhanced/**'
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  # MobileGlues 2.0.0 release commit (2026-08-09). Pinning keeps builds
+  # reproducible instead of silently following upstream main.
+  MOBILEGLUES_COMMIT: fbc4e412e353302607ba36489b2dd573b5becb25
+
+jobs:
+  build-ios:
+    name: Build Amethyst Enhanced (iOS arm64)
+    runs-on: macos-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout Amethyst
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          brew install make ldid wget cmake
+          brew install --cask temurin@8
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+          /usr/libexec/java_home -V
+
+      - name: Pin MobileGlues 2.0.0 and nested dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          MG=Natives/external/MobileGlues
+          git -C "$MG" fetch --depth=1 origin "$MOBILEGLUES_COMMIT"
+          git -C "$MG" checkout --detach "$MOBILEGLUES_COMMIT"
+          git -C "$MG" submodule sync --recursive
+          git -C "$MG" submodule update --init --recursive --depth=1
+          test -f "$MG/MobileGlues-cpp/CMakeLists.txt"
+          echo "Pinned MobileGlues: $(git -C "$MG" rev-parse HEAD)"
+
+      - name: Prepare Enhanced build tree
+        run: |
+          python3 scripts/prepare_enhanced_build.py
+          grep -n "MobileGlues-cpp" Makefile
+          grep -n "CMAKE_BUILD_TYPE=Release" Makefile
+
+      - name: Build optimized IPA
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export PATH="$(brew --prefix)/bin:$PATH"
+          # RELEASE=1 gives the Amethyst native target a Release CMake build.
+          # The preparation script separately forces MobileGlues to Release,
+          # allowing its supported IPO/ThinLTO path to engage.
+          gmake -j"$(sysctl -n hw.ncpu)" dsym package PLATFORM=2 RELEASE=1
+
+      - name: Verify and name artifact
+        shell: bash
+        run: |
+          set -euxo pipefail
+          IPA="$(find artifacts -maxdepth 1 -type f -name 'org.angelauramc.amethyst-*-ios.ipa' | head -n 1)"
+          test -n "$IPA"
+          test -s "$IPA"
+          cp "$IPA" artifacts/Amethyst-Enhanced-A13-iOS.ipa
+          shasum -a 256 artifacts/Amethyst-Enhanced-A13-iOS.ipa | tee artifacts/Amethyst-Enhanced-A13-iOS.sha256
+          ls -lh artifacts/Amethyst-Enhanced-A13-iOS.ipa
+
+      - name: Upload Amethyst Enhanced IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Amethyst-Enhanced-A13-iOS
+          path: |
+            artifacts/Amethyst-Enhanced-A13-iOS.ipa
+            artifacts/Amethyst-Enhanced-A13-iOS.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload debug symbols
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Amethyst-Enhanced-dSYM
+          path: artifacts/AngelAuraAmethyst.dSYM
+          if-no-files-found: ignore
+          retention-days: 7
