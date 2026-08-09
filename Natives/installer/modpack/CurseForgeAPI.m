@@ -18,7 +18,7 @@ static const NSInteger kCurseForgeMinecraftGameID = 432;
     self = [super initWithURL:@"https://api.curseforge.com/v1"];
     if (self) {
         NSString *runtimeKey = [getPrefObject(@"content.curseforge_api_key") stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-        NSString *compiledKey = [CONFIG_CURSEFORGE_API_KEY stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        NSString *compiledKey = [(NSString *)CONFIG_CURSEFORGE_API_KEY stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
         self.apiKey = runtimeKey.length ? runtimeKey : (compiledKey.length ? compiledKey : nil);
     }
     return self;
