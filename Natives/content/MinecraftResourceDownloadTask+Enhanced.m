@@ -33,12 +33,10 @@
                                                       success:^{
         if (completion) completion(path);
     }];
-    if (task) {
-        [task resume];
-    } else if (!self.progress.cancelled && completion) {
-        // Existing and already-verified file path.
-        completion(path);
-    }
+    // createDownloadTask already invokes its success block when a matching file
+    // exists. A nil task can also mean access was denied, so do not synthesize a
+    // second success here.
+    if (task) [task resume];
 }
 
 @end
