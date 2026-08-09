@@ -10,11 +10,18 @@ MODERN_NATIVE="$ROOT/Natives/resources/Frameworks/lwjgl-modern"
 rm -rf "$WORK"
 mkdir -p "$WORK" "$OTHER_JARS" "$MODERN_NATIVE"
 
-JAVA8_HOME="$(/usr/libexec/java_home -v 1.8)"
-JAVA25_HOME="$(/usr/libexec/java_home -v 25)"
+# actions/setup-java exposes architecture-specific homes on Apple Silicon. Fall
+# back to java_home for local developer builds.
+JAVA8_HOME="${JAVA_HOME_8_ARM64:-$(/usr/libexec/java_home -v 1.8)}"
+JAVA25_HOME="${JAVA_HOME_25_ARM64:-$(/usr/libexec/java_home -v 25)}"
 export JAVA8_HOME
 export JAVA_HOME="$JAVA25_HOME"
 export PATH="$JAVA_HOME/bin:$PATH"
+
+echo "JDK8:  $JAVA8_HOME"
+echo "JDK25: $JAVA25_HOME"
+"$JAVA8_HOME/bin/java" -version
+"$JAVA25_HOME/bin/java" -version
 
 echo "=== Enhanced v4: preserve legacy LWJGL Java API ==="
 # Minecraft 1.21.11 still calls API removed in newer LWJGL (notably the old
