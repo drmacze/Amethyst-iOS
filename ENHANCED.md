@@ -30,19 +30,21 @@ behaviour, memory behaviour, or sustained thermals without new rendering errors.
 ### Persistent iOS MobileGlues shader cache
 
 MobileGlues' upstream default state directory is `/sdcard/MG`, which is an
-Android path. Enhanced v3 assigns a writable, profile-local directory before the
-renderer is loaded:
+Android path. Enhanced v3 assigns a writable, launcher-global directory before
+the renderer is loaded:
 
-`<gameDir>/.amethyst/mobileglues/2.0.0/`
+`<POJAV_HOME>/.amethyst/mobileglues/2.0.0/`
 
-This lets MobileGlues' `glsl_cache.tmp` survive normal iOS launches and avoids
-retranslating the same desktop GLSL on every clean start when the cache hits.
-The directory is versioned because the cache key is based on shader source; a
-future translator version should not silently consume translations produced by
-an older MobileGlues build. An explicit user-provided `MG_DIR_PATH` is respected.
+This lets MobileGlues' `glsl_cache.tmp` survive normal iOS launches and lets
+profiles using the same pinned renderer reuse identical translated shader
+sources. A launcher-global path also avoids a profile switch in the same process
+leaving `MG_DIR_PATH` attached to whichever profile launched first.
 
-The launcher logs the selected directory and existing cache size as
-`[EnhancedRenderer]` diagnostics.
+The directory is versioned because the cache key is based on shader source and
+the cache file has no translator-version header; a future renderer should not
+silently consume translations produced by an older MobileGlues build. An
+explicit user-provided `MG_DIR_PATH` is respected. The launcher logs the selected
+directory and existing cache size as `[EnhancedRenderer]` diagnostics.
 
 ### iOS memory governor and diagnostics
 
@@ -116,8 +118,9 @@ does not embed or share an unauthorized provider key.
    `[EnhancedMemory]`, `[EnhancedPerf]`, temperature and stability.
 3. Quit back to the launcher and launch the same profile repeatedly. Confirm old
    input/gyro/audio work does not survive between sessions.
-4. After the first renderer run, confirm the profile-local MobileGlues directory
-   contains `glsl_cache.tmp`; compare a cold launch with a cache-hit launch.
+4. After the first renderer run, confirm
+   `<POJAV_HOME>/.amethyst/mobileglues/2.0.0/glsl_cache.tmp` exists; compare a cold
+   launch with a cache-hit launch and try a second profile using the same shader.
 5. Test Content Hub shader/resource-pack installation and one Modrinth modpack.
 6. Add Iris with shaders disabled, then a lightweight shader.
 7. Compare MobileGlues v3 against the previous v2 artifact and Zink using the
