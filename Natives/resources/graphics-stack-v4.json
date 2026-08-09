@@ -1,0 +1,33 @@
+{
+  "edition": "Amethyst Enhanced v4",
+  "target": "Apple A13 / arm64 / iOS 15+",
+  "mobileglues": {
+    "source": "MobileGL-Dev/MobileGlues",
+    "commit": "fbc4e412e353302607ba36489b2dd573b5becb25",
+    "policy": "pinned-known-good-core"
+  },
+  "mesaModern": {
+    "version": "26.1.6",
+    "sha256": "5296b88a0f1e012e2cb9ada150a2bbadf728ca81e5a4fb2ab43c83a4d2158606",
+    "driver": "zink",
+    "status": "experimental-until-A13-device-validation"
+  },
+  "moltenVK": {
+    "version": "1.4.2",
+    "tag": "v1.4.2"
+  },
+  "angle": {
+    "source": "chromium.googlesource.com/angle/angle",
+    "branch": "chromium/7871",
+    "basis": "Chrome 150 stable branch"
+  },
+  "lwjgl": {
+    "targetVersion": "3.4.2",
+    "minimumForMinecraft26_2": "3.4.1",
+    "status": "requires-iOS-native-module-validation"
+  },
+  "fallbacks": {
+    "zinkLegacy": "bundled Mesa 21 libOSMesa.8.dylib",
+    "auto": "MobileGlues Enhanced"
+  }
+}
