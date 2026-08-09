@@ -2,9 +2,6 @@ name: Amethyst Enhanced v4 A13
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - enhanced/v4
   pull_request:
     branches:
       - enhanced/v3
