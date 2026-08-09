@@ -24,7 +24,10 @@ env:
 jobs:
   build-ios:
     name: Build Amethyst Enhanced v4 (A13 arm64)
-    runs-on: macos-15
+    # x64 host is intentional. All shipped code below is cross-compiled arm64
+    # for iPhone; macos-14 runners have substantially better availability than
+    # scarce arm64 macos-15 hosts and use the same supported Xcode toolchain.
+    runs-on: macos-14
     timeout-minutes: 300
 
     steps:
