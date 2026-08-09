@@ -25,8 +25,6 @@ env:
 jobs:
   build-ios:
     name: Build Amethyst Enhanced v4 (A13 arm64)
-    # macOS 26 is GA on GitHub-hosted runners and supplies the current Apple
-    # Silicon/Xcode environment. Shipped code is still explicitly iOS arm64/A13.
     runs-on: macos-26
     timeout-minutes: 300
 
@@ -96,6 +94,9 @@ jobs:
       - name: Apply Enhanced v4 graphics integration
         run: python3 scripts/patch_v4_graphics.py
 
+      - name: Apply Enhanced v4 adaptive performance policy
+        run: python3 scripts/patch_v4_performance.py
+
       - name: Apply Enhanced v4 dual-LWJGL selector
         run: python3 scripts/patch_v4_lwjgl_runtime.py
 
@@ -110,6 +111,9 @@ jobs:
           grep -n "Zink Modern" Natives/LauncherPreferences.m
           grep -n "RENDERER_NAME_VK_ZINK_MODERN" Natives/utils.h
           grep -n "EnhancedGraphics" Natives/JavaLauncher.m
+          grep -n "EnhancedPerformance" Natives/JavaLauncher.m
+          grep -n "performance_profile" Natives/PLPreferences.m Natives/LauncherPreferencesViewController.m
+          grep -n "thermal_governor" Natives/PLPreferences.m Natives/LauncherPreferencesViewController.m
           grep -n "EnhancedRuntime" Natives/JavaLauncher.m
           grep -n "EnhancedMemory" Natives/JavaLauncher.m
           grep -n "performPendingRendererCacheCleanup" Natives/JavaLauncher.m
