@@ -14,16 +14,16 @@ printf '\n=== Enhanced v4: ANGLE Metal / %s ===\n' "$ANGLE_BRANCH"
 # less risky than taking arbitrary `main`.
 git clone --depth 1 --branch "$ANGLE_BRANCH" \
   https://chromium.googlesource.com/angle/angle "$WORK/angle"
-pushd "$WORK/angle"
 
-# Standalone ANGLE's bootstrap + gclient path is the supported way to obtain the
-# exact DEPS revisions associated with this branch.
+# ANGLE's bootstrap script invokes gclient itself, so depot_tools must already
+# be on PATH before bootstrap starts.
+git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$WORK/depot_tools"
+export PATH="$WORK/depot_tools:$PATH"
+
+pushd "$WORK/angle"
 python3 scripts/bootstrap.py
-export PATH="$PWD/../depot_tools:$PWD/depot_tools:$PATH"
-if ! command -v gclient >/dev/null 2>&1; then
-  git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$WORK/depot_tools"
-  export PATH="$WORK/depot_tools:$PATH"
-fi
+# Bootstrap writes the gclient solution around this checkout. Sync the exact
+# DEPS revisions associated with chromium/7871 rather than following main.
 gclient sync -D --no-history --shallow
 
 mkdir -p out/ios-arm64
@@ -60,7 +60,7 @@ EGL_BIN="$(find out/ios-arm64 -type f \( -name 'libEGL.dylib' -o -path '*/libEGL
 GLES_BIN="$(find out/ios-arm64 -type f \( -name 'libGLESv2.dylib' -o -path '*/libGLESv2.framework/libGLESv2' \) | head -n1 || true)"
 if [[ -z "$EGL_BIN" || -z "$GLES_BIN" ]]; then
   echo "ANGLE build succeeded but expected dynamic libraries were not found." >&2
-  find out/ios-arm64 -maxdepth 4 -type f | grep -E 'EGL|GLESv2' | head -200 >&2 || true
+  find out/ios-arm64 -maxdepth 5 -type f | grep -E 'EGL|GLESv2' | head -200 >&2 || true
   exit 31
 fi
 
