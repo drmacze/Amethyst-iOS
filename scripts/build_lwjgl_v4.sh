@@ -10,10 +10,10 @@ MODERN_NATIVE="$ROOT/Natives/resources/Frameworks/lwjgl-modern"
 rm -rf "$WORK"
 mkdir -p "$WORK" "$OTHER_JARS" "$MODERN_NATIVE"
 
-# actions/setup-java exposes architecture-specific homes on Apple Silicon. Fall
-# back to java_home for local developer builds.
-JAVA8_HOME="${JAVA_HOME_8_ARM64:-$(/usr/libexec/java_home -v 1.8)}"
-JAVA25_HOME="${JAVA_HOME_25_ARM64:-$(/usr/libexec/java_home -v 25)}"
+# actions/setup-java names these variables by runner architecture. The runtime
+# being *built* is still iOS arm64; host JDK architecture only executes Ant.
+JAVA8_HOME="${JAVA_HOME_8_ARM64:-${JAVA_HOME_8_X64:-$(/usr/libexec/java_home -v 1.8)}}"
+JAVA25_HOME="${JAVA_HOME_25_ARM64:-${JAVA_HOME_25_X64:-$(/usr/libexec/java_home -v 25)}}"
 export JAVA8_HOME
 export JAVA_HOME="$JAVA25_HOME"
 export PATH="$JAVA_HOME/bin:$PATH"
@@ -24,9 +24,6 @@ echo "JDK25: $JAVA25_HOME"
 "$JAVA25_HOME/bin/java" -version
 
 echo "=== Enhanced v4: preserve legacy LWJGL Java API ==="
-# Minecraft 1.21.11 still calls API removed in newer LWJGL (notably the old
-# stb_image_resize entry points). Keep the launcher-supported 3.3.x Java binding
-# as a separate bootstrap jar instead of globally replacing it with 3.4.x.
 rm -rf "$WORK/legacy-classes"
 mkdir -p "$WORK/legacy-classes"
 for f in "$LEGACY_JARS"/lwjgl*.jar; do
@@ -40,12 +37,8 @@ rm -rf "$WORK/legacy-classes/META-INF"
 echo "=== Enhanced v4: build AngelAura iOS LWJGL 3.4.1 ==="
 git clone --depth 1 --branch "$LWJGL_BRANCH" https://github.com/AngelAuraMC/lwjgl3.git "$WORK/lwjgl3"
 pushd "$WORK/lwjgl3"
-# This is AngelAura's iOS rebase and enables the exact modules Mojang's 26.2
-# NativeLibrariesBootstrap expects: shaderc, VMA, Vulkan and SPVC.
 bash ci_build_ios.bash
 
-# Merge the Java modules just like Amethyst's existing JavaApp build does, but
-# keep them isolated from the legacy 3.3.x API.
 rm -rf "$WORK/modern-classes"
 mkdir -p "$WORK/modern-classes"
 while IFS= read -r -d '' f; do
@@ -54,16 +47,11 @@ done < <(find bin/RELEASE -type f -name 'lwjgl*.jar' ! -name '*-sources.jar' ! -
 rm -rf "$WORK/modern-classes/META-INF"
 "$JAVA25_HOME/bin/jar" -cf "$OTHER_JARS/lwjgl-modern-3.4.1.jar" -C "$WORK/modern-classes" .
 
-# Do not overwrite the proven root native set used by 1.21.11. Modern 3.4.1
-# natives live in an isolated directory selected only for versions that declare
-# LWJGL >= 3.4.1.
 rm -rf "$MODERN_NATIVE"
 mkdir -p "$MODERN_NATIVE"
 cp bin/out/*.dylib "$MODERN_NATIVE"/
 popd
 
-# Validate the Java class that currently blocks Minecraft 26.2 and the matching
-# native module are both present before allowing the IPA build to continue.
 "$JAVA25_HOME/bin/jar" -tf "$OTHER_JARS/lwjgl-modern-3.4.1.jar" | grep -q '^org/lwjgl/util/spvc/Spvc.class$'
 test -f "$MODERN_NATIVE/liblwjgl_spvc.dylib"
 test -f "$MODERN_NATIVE/liblwjgl.dylib"
