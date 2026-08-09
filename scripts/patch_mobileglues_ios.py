@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MG = ROOT / "Natives" / "external" / "MobileGlues" / "MobileGlues-cpp"
 FB = MG / "gl" / "framebuffer.cpp"
 TRACE = MG / "egl" / "trace.h"
+CMAKE = MG / "CMakeLists.txt"
 
 
 def patch_exact(path: Path, old: str, new: str, label: str) -> None:
@@ -92,4 +93,32 @@ patch_exact(
 }
 ''',
     "MobileGlues EGL thread-id implementation for Darwin",
+)
+
+# -Bsymbolic-functions is a GNU/ELF linker option and Apple's ld rejects it.
+# Keep it on Linux/Android, but do not pass it to Mach-O. This deliberately
+# avoids adding a speculative Apple replacement in the baseline build.
+patch_exact(
+    CMAKE,
+    '''if (NOT MSVC)
+    # Calls between this library's own translation units must land in this
+    # library. Without this, an internal call to an exported gl* symbol goes
+    # through a preemptible PLT slot, and in an Android app process the system
+    # libGLESv2 -- always in the global symbol scope -- can win the lookup: the
+    # DSA wrappers and the benchmark would then be calling the real driver where
+    # they meant the frontend, silently bypassing all state tracking. The
+    # symbols stay exported for dlsym and eglGetProcAddress; only who internal
+    # calls bind to changes. On the target, not in the AppleClang-guarded block
+    # above -- that block's condition has never been true (dangling NOT MATCHES),
+    # which is also why --gc-sections never made it into the link.
+    target_link_options(${CMAKE_PROJECT_NAME} PRIVATE -Wl,-Bsymbolic-functions)
+endif()
+''',
+    '''if (NOT MSVC AND NOT MACOS)
+    # GNU/ELF only. Apple's Mach-O linker does not implement
+    # -Bsymbolic-functions, so Darwin must use its normal two-level namespace.
+    target_link_options(${CMAKE_PROJECT_NAME} PRIVATE -Wl,-Bsymbolic-functions)
+endif()
+''',
+    "MobileGlues ELF-only symbolic linker option",
 )
