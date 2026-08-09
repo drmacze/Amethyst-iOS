@@ -25,9 +25,9 @@ env:
 jobs:
   build-ios:
     name: Build Amethyst Enhanced v4 (A13 arm64)
-    # Host architecture is irrelevant to the shipped binary; every native
-    # component below is explicitly cross-compiled for iOS arm64/A13.
-    runs-on: macos-latest
+    # macOS 26 is GA on GitHub-hosted runners and supplies the current Apple
+    # Silicon/Xcode environment. Shipped code is still explicitly iOS arm64/A13.
+    runs-on: macos-26
     timeout-minutes: 300
 
     steps:
