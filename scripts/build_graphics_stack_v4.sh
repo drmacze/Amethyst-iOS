@@ -21,9 +21,6 @@ if [[ -f "$FRAMEWORKS/libOSMesa.8.dylib" ]]; then
   strings "$FRAMEWORKS/libOSMesa.8.dylib" | grep -m1 -E '^Mesa [0-9]' || true
   echo "Legacy Mesa linkage:"
   otool -L "$FRAMEWORKS/libOSMesa.8.dylib" || true
-  # If the legacy Zink binary has a direct MoltenVK dependency, keep it attached
-  # to the legacy copy. If it dlopens Vulkan instead, there is nothing safe to
-  # rewrite here and the command intentionally becomes a no-op.
   if otool -L "$FRAMEWORKS/libOSMesa.8.dylib" | grep -q 'libMoltenVK.dylib'; then
     install_name_tool -change @rpath/libMoltenVK.dylib @rpath/libMoltenVKLegacy.dylib "$FRAMEWORKS/libOSMesa.8.dylib" || true
     install_name_tool -change libMoltenVK.dylib @rpath/libMoltenVKLegacy.dylib "$FRAMEWORKS/libOSMesa.8.dylib" || true
@@ -62,9 +59,6 @@ curl -fL --retry 4 --retry-delay 2 \
 echo "$MESA_SHA256  $WORK/mesa-${MESA_VERSION}.tar.xz" | shasum -a 256 -c -
 tar -xJf "$WORK/mesa-${MESA_VERSION}.tar.xz" -C "$WORK"
 
-# Locate the packaged MoltenVK SDK directory. Mesa's moltenvk-dir option accepts
-# a MoltenVK/Vulkan SDK tree and avoids pretending Apple's platform has a native
-# system Vulkan loader.
 MVK_SDK="$(find "$WORK/MoltenVK/Package" -type d -name 'MoltenVK.xcframework' -print -quit || true)"
 if [[ -n "$MVK_SDK" ]]; then
   MVK_SDK="$(dirname "$MVK_SDK")"
@@ -94,12 +88,17 @@ c_link_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-Wl,-dead_strip
 cpp_link_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-Wl,-dead_strip']
 EOF
 
+# Mesa Meson array options use an empty value to mean "no drivers/platforms".
+# Passing the literal string [] is not an empty array and can make Mesa think a
+# native Vulkan driver was selected, which then correctly requires DRI3. For the
+# iOS Zink path Vulkan is supplied by MoltenVK, so no Mesa native Vulkan driver
+# or desktop WSI platform belongs in this build.
 MESON_ARGS=(
   --cross-file "$WORK/ios-arm64.ini"
   --buildtype release
   -Db_ndebug=true
   -Ddefault_library=shared
-  -Dplatforms=[]
+  -Dplatforms=
   -Dglx=disabled
   -Degl=disabled
   -Dgbm=disabled
@@ -108,7 +107,7 @@ MESON_ARGS=(
   -Dgles2=disabled
   -Dosmesa=true
   -Dgallium-drivers=zink
-  -Dvulkan-drivers=[]
+  -Dvulkan-drivers=
   -Dllvm=disabled
   -Dshared-glapi=enabled
   -Dbuild-tests=false
@@ -128,7 +127,6 @@ fi
 cp "$MESA_BIN" "$FRAMEWORKS/libOSMesaModern.8.dylib"
 install_name_tool -id @rpath/libOSMesaModern.8.dylib "$FRAMEWORKS/libOSMesaModern.8.dylib" || true
 
-# Ensure modern Mesa resolves Vulkan to the modern MoltenVK bundled in the app.
 for dep in $(otool -L "$FRAMEWORKS/libOSMesaModern.8.dylib" | awk '/MoltenVK/{print $1}'); do
   install_name_tool -change "$dep" @rpath/libMoltenVK.dylib "$FRAMEWORKS/libOSMesaModern.8.dylib" || true
 done
