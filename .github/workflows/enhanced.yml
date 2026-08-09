@@ -1,4 +1,4 @@
-name: Amethyst Enhanced v3 A13
+name: Amethyst Enhanced v3.1 A13
 
 on:
   workflow_dispatch:
@@ -14,14 +14,12 @@ permissions:
   contents: read
 
 env:
-  # MobileGlues 2.0.0 release commit. Pinning keeps renderer behavior
-  # reproducible instead of silently following upstream main.
   MOBILEGLUES_COMMIT: fbc4e412e353302607ba36489b2dd573b5becb25
   AMETHYST_CPU_TARGET: apple-a13
 
 jobs:
   build-ios:
-    name: Build Amethyst Enhanced v3 (A13 arm64)
+    name: Build Amethyst Enhanced v3.1 (A13 arm64)
     runs-on: macos-latest
     timeout-minutes: 90
 
@@ -57,9 +55,19 @@ jobs:
       - name: Apply Enhanced v3 runtime lifecycle fixes
         run: python3 scripts/patch_enhanced_runtime_v3.py
 
-      - name: Prepare Enhanced v3 build tree
+      - name: Prepare Enhanced v3 performance build tree
+        run: python3 scripts/prepare_enhanced_build.py
+
+      - name: Add Enhanced v3.1 cache manager
         run: |
-          python3 scripts/prepare_enhanced_build.py
+          python3 scripts/patch_cache_manager_v31.py
+          grep -n "EnhancedCacheManager.m" Natives/CMakeLists.txt
+          grep -n "Clear Cache" Natives/LauncherMenuViewController.m
+          grep -n "performPendingRendererCacheCleanup" Natives/JavaLauncher.m
+          grep -n "Amethyst Enhanced v3.1" Natives/Info.plist
+
+      - name: Verify performance build configuration
+        run: |
           grep -n "MobileGlues-cpp" Makefile
           grep -n "CMAKE_BUILD_TYPE=Release" Makefile
           grep -n -- "-mcpu=apple-a13" Makefile Natives/CMakeLists.txt
@@ -85,18 +93,18 @@ jobs:
           IPA="$(find artifacts -maxdepth 1 -type f -name 'org.angelauramc.amethyst-*-ios.ipa' | head -n 1)"
           test -n "$IPA"
           test -s "$IPA"
-          cp "$IPA" artifacts/Amethyst-Enhanced-v3-A13-iOS.ipa
-          shasum -a 256 artifacts/Amethyst-Enhanced-v3-A13-iOS.ipa | tee artifacts/Amethyst-Enhanced-v3-A13-iOS.sha256
-          unzip -l artifacts/Amethyst-Enhanced-v3-A13-iOS.ipa | grep -q 'Frameworks/libmobileglues.dylib'
-          ls -lh artifacts/Amethyst-Enhanced-v3-A13-iOS.ipa
+          cp "$IPA" artifacts/Amethyst-Enhanced-v3.1-A13-iOS.ipa
+          shasum -a 256 artifacts/Amethyst-Enhanced-v3.1-A13-iOS.ipa | tee artifacts/Amethyst-Enhanced-v3.1-A13-iOS.sha256
+          unzip -l artifacts/Amethyst-Enhanced-v3.1-A13-iOS.ipa | grep -q 'Frameworks/libmobileglues.dylib'
+          ls -lh artifacts/Amethyst-Enhanced-v3.1-A13-iOS.ipa
 
-      - name: Upload Amethyst Enhanced v3 IPA
+      - name: Upload Amethyst Enhanced v3.1 IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Amethyst-Enhanced-v3-A13-iOS
+          name: Amethyst-Enhanced-v3.1-A13-iOS
           path: |
-            artifacts/Amethyst-Enhanced-v3-A13-iOS.ipa
-            artifacts/Amethyst-Enhanced-v3-A13-iOS.sha256
+            artifacts/Amethyst-Enhanced-v3.1-A13-iOS.ipa
+            artifacts/Amethyst-Enhanced-v3.1-A13-iOS.sha256
           if-no-files-found: error
           retention-days: 14
 
@@ -104,7 +112,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Amethyst-Enhanced-v3-dSYM
+          name: Amethyst-Enhanced-v3.1-dSYM
           path: artifacts/AngelAuraAmethyst.dSYM
           if-no-files-found: ignore
           retention-days: 7
