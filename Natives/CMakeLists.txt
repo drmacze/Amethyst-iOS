@@ -3,7 +3,14 @@ project(AngelAuraAmethyst)
 
 configure_file(${CMAKE_CURRENT_LIST_DIR}/config.h.in ${CMAKE_CURRENT_LIST_DIR}/config.h)
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -target arm64-apple-ios -mcpu=apple-a8 -fcommon -fobjc-arc -ObjC -F'${CMAKE_OSX_SYSROOT}/System/Cryptexes/OS/System/Library/Frameworks'")
+# Upstream intentionally targets Apple A8 for broad compatibility. Enhanced
+# builds may opt into a newer CPU target while keeping the default unchanged.
+if(NOT DEFINED AMETHYST_CPU_TARGET)
+  set(AMETHYST_CPU_TARGET "apple-a8")
+endif()
+message(STATUS "Amethyst CPU target: ${AMETHYST_CPU_TARGET}")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -target arm64-apple-ios -mcpu=${AMETHYST_CPU_TARGET} -fcommon -fobjc-arc -ObjC -F'${CMAKE_OSX_SYSROOT}/System/Cryptexes/OS/System/Library/Frameworks'")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -target arm64-apple-ios -mcpu=${AMETHYST_CPU_TARGET}")
 set(CMAKE_C_FLAGS_DEBUG "-funwind-tables -g")
 
 if("${CMAKE_HOST_SYSTEM_NAME}" MATCHES "Linux|^GNU$|Android")
@@ -132,12 +139,16 @@ add_executable(AngelAuraAmethyst
   installer/modpack/CurseForgeAPI.m
   installer/modpack/ModrinthAPI.m
 
+  content/EnhancedContentAPI.m
+  content/MinecraftResourceDownloadTask+Enhanced.m
+
   input/ControllerInput.m
   input/GyroInput.m
   input/KeyboardInput.m
 
   AccountListViewController.m
   AppDelegate.m
+  ContentHubViewController.m
   CustomControlsViewController.m
   CustomControlsViewController+UndoManager.m
   DownloadProgressViewController.m
