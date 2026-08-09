@@ -2,6 +2,7 @@
 #import "LauncherPreferences.h"
 
 #import <Metal/Metal.h>
+#import <math.h>
 #import <sys/sysctl.h>
 #import <unistd.h>
 
@@ -26,8 +27,8 @@ static const NSInteger kEnhancedSmartSettingsLogicVersion = 4;
 + (NSInteger)metalCapabilityTier:(id<MTLDevice>)device {
     if (!device) return 0;
     if (@available(iOS 13.0, *)) {
-        // We deliberately group future GPUs at the highest capability class we
-        // know how to tune safely instead of guessing undocumented behavior.
+        // Future GPUs intentionally collapse into the newest capability class we
+        // have validated instead of inventing tuning rules for unknown hardware.
         if ([device supportsFamily:MTLGPUFamilyApple7]) return 7;
         if ([device supportsFamily:MTLGPUFamilyApple6]) return 6;
         if ([device supportsFamily:MTLGPUFamilyApple5]) return 5;
@@ -92,9 +93,9 @@ static const NSInteger kEnhancedSmartSettingsLogicVersion = 4;
 }
 
 + (NSString *)fingerprintForSnapshot:(NSDictionary *)snapshot {
-    // Thermal/Low Power are intentionally excluded because they are transient.
-    // The runtime governor handles them every launch. A rescan is required when
-    // hardware, OS, display capability, or Smart Settings logic changes.
+    // Thermal and Low Power Mode are transient and deliberately excluded. They
+    // are handled by the runtime governor on every game launch. Full Smart Scan
+    // repeats only when hardware, OS/display capability, or tuning logic changes.
     uint64_t memoryMB = [snapshot[@"memoryBytes"] unsignedLongLongValue] >> 20;
     uint64_t memoryBucket = (memoryMB / 512) * 512;
     return [NSString stringWithFormat:@"v%ld|%@|%@|mem%llu|cpu%ld|gpu%ld|fps%ld",
@@ -125,35 +126,26 @@ static const NSInteger kEnhancedSmartSettingsLogicVersion = 4;
     double memoryGB = [s[@"memoryBytes"] unsignedLongLongValue] / 1073741824.0;
     NSInteger gpu = [s[@"metalTier"] integerValue];
     NSInteger cpus = [s[@"activeCPUs"] integerValue];
-    NSInteger thermal = [s[@"thermalState"] integerValue];
-    BOOL lowPower = [s[@"lowPowerMode"] boolValue];
 
-    // Stable baseline. We only select aggressive tiers when BOTH memory and GPU
-    // capability support them; CPU count is a secondary guard, not a device-name
-    // guess. Current heat/power state can only lower the recommendation.
-    NSString *profile;
+    // Persistent recommendation is hardware-derived only. A temporary hot or
+    // low-battery state must not permanently downgrade a capable phone. The
+    // EnhancedPerformance runtime governor applies thermal/power downgrades at
+    // launch time and restores the requested tier naturally when conditions heal.
     if (gpu == 0 || memoryGB < 3.5 || gpu < 5 || cpus < 4) {
-        profile = @"compatibility";
-    } else if (memoryGB >= 7.5 && gpu >= 7 && cpus >= 6) {
-        profile = @"max";
-    } else if (memoryGB >= 5.5 && gpu >= 7 && cpus >= 6) {
-        profile = @"performance";
-    } else {
-        profile = @"balanced";
-    }
-
-    if (thermal >= NSProcessInfoThermalStateSerious) {
         return @"compatibility";
     }
-    if (lowPower && ([profile isEqualToString:@"max"] || [profile isEqualToString:@"performance"])) {
-        return @"balanced";
+    if (memoryGB >= 7.5 && gpu >= 7 && cpus >= 6) {
+        return @"max";
     }
-    return profile;
+    if (memoryGB >= 5.5 && gpu >= 7 && cpus >= 6) {
+        return @"performance";
+    }
+    return @"balanced";
 }
 
 + (NSInteger)recommendedResolutionFor:(NSDictionary *)s profile:(NSString *)profile {
     double nativePixels = MAX(1.0, [s[@"nativePixels"] doubleValue]);
-    double targetMP = 1.05; // Balanced: conservative sustained-performance target.
+    double targetMP = 1.05; // Balanced sustained-rendering pixel budget.
     if ([profile isEqualToString:@"compatibility"]) targetMP = 0.78;
     else if ([profile isEqualToString:@"performance"]) targetMP = 1.35;
     else if ([profile isEqualToString:@"max"]) targetMP = 1.70;
@@ -163,8 +155,8 @@ static const NSInteger kEnhancedSmartSettingsLogicVersion = 4;
     if (gpu <= 5) targetMP *= 0.90;
     if (memoryGB < 4.0) targetMP *= 0.88;
 
-    // Resolution is a linear dimension percentage, therefore pixel load scales
-    // with the square. sqrt(target/native) converts the pixel budget correctly.
+    // Pixel cost is approximately quadratic in a linear render-scale setting.
+    // sqrt(target/native) converts our pixel budget into the launcher's percent.
     double scale = sqrt((targetMP * 1000000.0) / nativePixels) * 100.0;
     NSInteger percent = (NSInteger)llround(scale);
     return MAX(55, MIN(100, percent));
@@ -175,9 +167,9 @@ static const NSInteger kEnhancedSmartSettingsLogicVersion = 4;
     NSInteger resolution = [self recommendedResolutionFor:snapshot profile:profile];
     NSInteger maxFPS = [snapshot[@"maxFPS"] integerValue];
 
-    // 120 Hz is only unlocked automatically for the strongest profile. This is
-    // intentionally conservative because chasing 120 FPS is a common source of
-    // sustained thermal throttling on phones.
+    // 120 Hz is unlocked automatically only for the strongest hardware profile.
+    // This avoids choosing a thermally expensive target merely because ProMotion
+    // exists. Users can still override it manually after Smart Settings.
     BOOL unlockHighRefresh = maxFPS > 60 && [profile isEqualToString:@"max"];
 
     return @{
@@ -201,6 +193,9 @@ static const NSInteger kEnhancedSmartSettingsLogicVersion = 4;
 }
 
 + (NSString *)applyRecommendation:(NSDictionary *)r snapshot:(NSDictionary *)s {
+    // Auto renderer intentionally stays on the validated MobileGlues baseline.
+    // Smart Settings tunes the device around a known-safe default instead of
+    // promoting experimental Zink simply because a phone is newer.
     setPrefObject(@"video.renderer", r[@"renderer"]);
     setPrefObject(@"video.performance_profile", r[@"profile"]);
     setPrefObject(@"video.resolution", r[@"resolution"]);
@@ -212,20 +207,22 @@ static const NSInteger kEnhancedSmartSettingsLogicVersion = 4;
     setPrefObject(@"java.auto_ram", r[@"autoRAM"]);
 
     NSString *fingerprint = [self fingerprintForSnapshot:s];
+    NSString *powerNote = [s[@"lowPowerMode"] boolValue] ? @" · Low Power currently active" : @"";
     NSString *summary = [NSString stringWithFormat:
-        @"%@ · %@ · %ld%% render scale · Auto RAM · Thermal Guard",
+        @"%@ · %@ · %ld%% render scale · Auto RAM · Thermal Guard%@",
         s[@"machine"] ?: @"iPhone",
         [self displayNameForProfile:r[@"profile"]],
-        (long)[r[@"resolution"] integerValue]];
+        (long)[r[@"resolution"] integerValue], powerNote];
     setPrefObject(@"internal.smart_settings_fingerprint", fingerprint);
     setPrefObject(@"internal.smart_settings_summary", summary);
     setPrefObject(@"internal.smart_settings_logic_version", @(kEnhancedSmartSettingsLogicVersion));
 
-    NSLog(@"[SmartSettings] device=%@ iOS=%@ RAM=%.2fGB cpu=%ld metalTier=%ld metal=%@ nativePixels=%.0f maxFPS=%ld thermal=%ld lowPower=%@",
+    NSLog(@"[SmartSettings] device=%@ iOS=%@ RAM=%.2fGB cpu=%ld metalTier=%ld metal=%@ maxBuffer=%lluMB nativePixels=%.0f maxFPS=%ld thermal=%ld lowPower=%@",
           s[@"machine"], s[@"os"],
           [s[@"memoryBytes"] unsignedLongLongValue] / 1073741824.0,
           (long)[s[@"activeCPUs"] integerValue], (long)[s[@"metalTier"] integerValue],
-          s[@"metalName"], [s[@"nativePixels"] doubleValue], (long)[s[@"maxFPS"] integerValue],
+          s[@"metalName"], [s[@"maxBufferLength"] unsignedLongLongValue] >> 20,
+          [s[@"nativePixels"] doubleValue], (long)[s[@"maxFPS"] integerValue],
           (long)[s[@"thermalState"] integerValue], [s[@"lowPowerMode"] boolValue] ? @"YES" : @"NO");
     NSLog(@"[SmartSettings] applied profile=%@ resolution=%@ highRefresh=%@ renderer=auto autoRAM=YES fingerprint=%@",
           r[@"profile"], r[@"resolution"], [r[@"maxFramerate"] boolValue] ? @"YES" : @"NO", fingerprint);
@@ -326,32 +323,33 @@ static const NSInteger kEnhancedSmartSettingsLogicVersion = 4;
     }];
 }
 
++ (void)scheduleAutomaticScanFrom:(UIViewController *)presenter attempt:(NSInteger)attempt {
+    if (!presenter || attempt > 12) return;
+    id rendererPref = getPrefObject(@"video.renderer");
+    if (!rendererPref) {
+        __weak UIViewController *weakPresenter = presenter;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIViewController *strongPresenter = weakPresenter;
+            if (strongPresenter) [self scheduleAutomaticScanFrom:strongPresenter attempt:attempt + 1];
+        });
+        return;
+    }
+    if (!getPrefBool(@"video.smart_settings")) return;
+    [self presentScanFrom:presenter force:NO completion:nil];
+}
+
 + (void)runAutomaticScanIfNeededFrom:(UIViewController *)presenter {
     if (!presenter) return;
-
-    // Preferences can finish loading just after the initial scene is shown.
-    // Retry briefly rather than treating a not-yet-loaded store as "disabled".
-    __block NSInteger attempts = 0;
     __weak UIViewController *weakPresenter = presenter;
-    __block void (^retry)(void) = nil;
-    retry = ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.55 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         UIViewController *strongPresenter = weakPresenter;
-        if (!strongPresenter) return;
-        id rendererPref = getPrefObject(@"video.renderer");
-        if (!rendererPref && attempts++ < 12) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), retry);
-            return;
-        }
-        if (!getPrefBool(@"video.smart_settings")) return;
-        [self presentScanFrom:strongPresenter force:NO completion:nil];
-        retry = nil;
-    };
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.55 * NSEC_PER_SEC)), dispatch_get_main_queue(), retry);
+        if (strongPresenter) [self scheduleAutomaticScanFrom:strongPresenter attempt:0];
+    });
 }
 
 + (NSString *)lastSummary {
     NSString *summary = getPrefObject(@"internal.smart_settings_summary");
-    return [summary isKindOfClass:NSString.class] ? summary : @"Not scanned yet";
+    return [summary isKindOfClass:NSString.class] && summary.length ? summary : @"Not scanned yet";
 }
 
 @end
