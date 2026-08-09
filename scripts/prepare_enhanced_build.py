@@ -16,6 +16,7 @@ MAKEFILE = ROOT / "Makefile"
 INFO_PLIST = ROOT / "Natives" / "Info.plist"
 CMAKE = ROOT / "Natives" / "CMakeLists.txt"
 JAVA_LAUNCHER = ROOT / "Natives" / "JavaLauncher.m"
+CONTENT_HUB = ROOT / "Natives" / "ContentHubViewController.m"
 CPU_TARGET = os.environ.get("AMETHYST_CPU_TARGET", "apple-a13").strip() or "apple-a13"
 
 
@@ -144,6 +145,24 @@ require(old_auto in java or "[EnhancedRenderer]" in java, "Auto renderer block n
 java = java.replace(old_auto, new_auto, 1)
 JAVA_LAUNCHER.write_text(java, encoding="utf-8")
 
+# Content Hub's ZIP enumeration callback writes through NSError** several times.
+# Under ARC, an outer local captured by a nested block is const by default, so
+# passing &error is rejected. Mark only this world-install error variable __block
+# to give the callback mutable storage while preserving the same error flow.
+hub = CONTENT_HUB.read_text(encoding="utf-8")
+world_method = '- (void)installWorldArchive:(NSString *)archivePath item:(NSDictionary *)item version:(NSDictionary *)version {'
+require(world_method in hub, "Content Hub world installer method missing")
+method_pos = hub.index(world_method)
+error_pos = hub.find("        NSError *error = nil;", method_pos)
+require(error_pos != -1, "Content Hub world installer NSError declaration missing")
+if "        __block NSError *error = nil;" not in hub[method_pos:error_pos + 80]:
+    hub = hub[:error_pos] + hub[error_pos:].replace(
+        "        NSError *error = nil;",
+        "        __block NSError *error = nil;",
+        1,
+    )
+CONTENT_HUB.write_text(hub, encoding="utf-8")
+
 # Brand the test build while keeping the original bundle identifier so the
 # user's existing Amethyst data/profile layout remains compatible.
 with INFO_PLIST.open("rb") as fh:
@@ -158,5 +177,6 @@ print("  - MobileGlues 2.x source layout + Release/ThinLTO path")
 print(f"  - native A13 codegen target: {CPU_TARGET}")
 print("  - headroom-aware iOS Auto RAM policy")
 print("  - Auto renderer -> MobileGlues")
+print("  - Content Hub ARC-safe world extraction")
 print("  - obsolete dynamic SPIRV-Cross copy removed")
 print("  - display name set to Amethyst Enhanced v2")
