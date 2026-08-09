@@ -22,9 +22,17 @@
     "basis": "Chrome 150 stable branch"
   },
   "lwjgl": {
-    "targetVersion": "3.4.2",
-    "minimumForMinecraft26_2": "3.4.1",
-    "status": "requires-iOS-native-module-validation"
+    "upstreamLatest": "3.4.2",
+    "iosModernRuntime": "3.4.1",
+    "iosSource": "AngelAuraMC/lwjgl3:wip/rebase_3.4.1",
+    "legacyRuntime": "launcher 3.3.x API preserved for 1.21.11",
+    "selection": "version metadata; Java 25 fallback for 26.x",
+    "requiredModernModules": ["spvc", "shaderc", "vma", "vulkan", "stb", "opengl", "glfw"]
+  },
+  "compatibility": {
+    "minecraft1_21_11": "legacy LWJGL + selectable renderer",
+    "minecraft26x": "modern LWJGL 3.4.1 + Java 25 path; physical-device validation required",
+    "future26plus": "not guaranteed; launcher selects by metadata and fails closed if the matching runtime is missing"
   },
   "fallbacks": {
     "zinkLegacy": "bundled Mesa 21 libOSMesa.8.dylib",
