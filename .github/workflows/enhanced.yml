@@ -13,6 +13,12 @@ on:
 permissions:
   contents: read
 
+# v4 iterates on long graphics toolchain builds. Do not burn scarce macOS
+# runners compiling commits that have already been superseded on the same ref.
+concurrency:
+  group: amethyst-enhanced-v4-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   MOBILEGLUES_COMMIT: fbc4e412e353302607ba36489b2dd573b5becb25
   MESA_VERSION: 26.1.6
