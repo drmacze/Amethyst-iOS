@@ -2,6 +2,20 @@
 #import "ModrinthAPI.h"
 #import "PLProfiles.h"
 
+static BOOL EnhancedModrinthSafeDestination(NSString *relative, NSString *root, NSString **destination) {
+    if (![relative isKindOfClass:NSString.class] || relative.length == 0) return NO;
+    if ([relative hasPrefix:@"/"] || [relative hasPrefix:@"~"]) return NO;
+    NSArray<NSString *> *components = relative.pathComponents;
+    if ([components containsObject:@".."] || [components containsObject:@"~"]) return NO;
+
+    NSString *standardRoot = root.stringByStandardizingPath;
+    NSString *rootPrefix = [standardRoot stringByAppendingString:@"/"];
+    NSString *standardDestination = [[standardRoot stringByAppendingPathComponent:relative] stringByStandardizingPath];
+    if (![standardDestination hasPrefix:rootPrefix]) return NO;
+    if (destination) *destination = standardDestination;
+    return YES;
+}
+
 @implementation ModrinthAPI
 
 - (instancetype)init {
@@ -52,19 +66,22 @@
     if (!response) {
         return;
     }
-    NSArray<NSString *> *names = [response valueForKey:@"name"];
+    NSMutableArray<NSString *> *names = [NSMutableArray new];
     NSMutableArray<NSString *> *mcNames = [NSMutableArray new];
     NSMutableArray<NSString *> *urls = [NSMutableArray new];
     NSMutableArray<NSString *> *hashes = [NSMutableArray new];
-    NSMutableArray<NSString *> *sizes = [NSMutableArray new];
-    [response enumerateObjectsUsingBlock:
-  ^(NSDictionary *version, NSUInteger i, BOOL *stop) {
-        NSDictionary *file = [version[@"files"] firstObject];
-        mcNames[i] = [version[@"game_versions"] firstObject];
-        sizes[i] = file[@"size"];
-        urls[i] = file[@"url"];
-        NSDictionary *hashesMap = file[@"hashes"];
-        hashes[i] = hashesMap[@"sha1"] ?: [NSNull null];
+    NSMutableArray<NSNumber *> *sizes = [NSMutableArray new];
+    [response enumerateObjectsUsingBlock:^(NSDictionary *version, NSUInteger i, BOOL *stop) {
+        NSArray *files = version[@"files"];
+        NSDictionary *file = [files isKindOfClass:NSArray.class] ? files.firstObject : nil;
+        NSString *url = [file[@"url"] isKindOfClass:NSString.class] ? file[@"url"] : nil;
+        if (!url.length) return;
+
+        [names addObject:version[@"name"] ?: version[@"version_number"] ?: @"Version"];
+        [mcNames addObject:[version[@"game_versions"] firstObject] ?: @""];
+        [sizes addObject:file[@"size"] ?: @0];
+        [urls addObject:url];
+        [hashes addObject:file[@"hashes"][@"sha1"] ?: @""];
     }];
     item[@"versionNames"] = names;
     item[@"mcVersionNames"] = mcNames;
@@ -75,40 +92,54 @@
 }
 
 - (void)downloader:(MinecraftResourceDownloadTask *)downloader submitDownloadTasksFromPackage:(NSString *)packagePath toPath:(NSString *)destPath {
-    NSError *error;
+    NSError *error = nil;
     UZKArchive *archive = [[UZKArchive alloc] initWithPath:packagePath error:&error];
-    if (error) {
-        [downloader finishDownloadWithErrorString:[NSString stringWithFormat:@"Failed to open modpack package: %@", error.localizedDescription]];
+    if (!archive || error) {
+        [downloader finishDownloadWithErrorString:[NSString stringWithFormat:@"Failed to open modpack package: %@", error.localizedDescription ?: @"invalid ZIP"]];
         return;
     }
 
     NSData *indexData = [archive extractDataFromFile:@"modrinth.index.json" error:&error];
-    NSDictionary* indexDict = [NSJSONSerialization JSONObjectWithData:indexData options:kNilOptions error:&error];
-    if (error) {
-        [downloader finishDownloadWithErrorString:[NSString stringWithFormat:@"Failed to parse modrinth.index.json: %@", error.localizedDescription]];
+    if (!indexData || error) {
+        [downloader finishDownloadWithErrorString:[NSString stringWithFormat:@"Failed to read modrinth.index.json: %@", error.localizedDescription ?: @"missing index"]];
+        return;
+    }
+    NSDictionary *indexDict = [NSJSONSerialization JSONObjectWithData:indexData options:kNilOptions error:&error];
+    if (![indexDict isKindOfClass:NSDictionary.class] || error) {
+        [downloader finishDownloadWithErrorString:[NSString stringWithFormat:@"Failed to parse modrinth.index.json: %@", error.localizedDescription ?: @"invalid index"]];
         return;
     }
 
-    downloader.progress.totalUnitCount = [indexDict[@"files"] count];
-    for (NSDictionary *indexFile in indexDict[@"files"]) {
-/*
-        if ([indexFile[@"downloads"] count] > 1) {
-            [downloader finishDownloadWithErrorString:[NSString stringWithFormat:@"Unhandled multiple files download %@", indexFile[@"downloads"]]];
+    NSArray *indexFiles = indexDict[@"files"];
+    if (![indexFiles isKindOfClass:NSArray.class]) {
+        [downloader finishDownloadWithErrorString:@"Invalid Modrinth pack: files is missing or is not an array."];
+        return;
+    }
+
+    downloader.progress.totalUnitCount = indexFiles.count;
+    for (NSDictionary *indexFile in indexFiles) {
+        NSArray *downloads = indexFile[@"downloads"];
+        NSString *url = [downloads isKindOfClass:NSArray.class] ? downloads.firstObject : nil;
+        NSString *relative = indexFile[@"path"];
+        NSString *path = nil;
+        if (!url.length) {
+            [downloader finishDownloadWithErrorString:[NSString stringWithFormat:@"Modrinth pack file %@ has no download URL.", relative ?: @"(unknown)"]];
             return;
         }
-*/
-        NSString *url = [indexFile[@"downloads"] firstObject];
-        NSString *sha = indexFile[@"hashes"][@"sha1"];
-        NSString *path = [destPath stringByAppendingPathComponent:indexFile[@"path"]];
+        if (!EnhancedModrinthSafeDestination(relative, destPath, &path)) {
+            [downloader finishDownloadWithErrorString:[NSString stringWithFormat:@"Unsafe file path blocked in Modrinth pack: %@", relative ?: @"(null)"]];
+            return;
+        }
+
+        NSString *sha = indexFile[@"hashes"][@"sha1"] ?: @"";
         NSUInteger size = [indexFile[@"fileSize"] unsignedLongLongValue];
-        NSURLSessionDownloadTask *task = [downloader createDownloadTask:url size:size sha:sha altName:nil toPath:path];
+        NSURLSessionDownloadTask *task = [downloader createDownloadTask:url size:size sha:sha altName:relative toPath:path];
         if (task) {
-            [downloader.fileList addObject:indexFile[@"path"]];
             [task resume];
         } else if (!downloader.progress.cancelled) {
             downloader.progress.completedUnitCount++;
         } else {
-            return; // cancelled
+            return;
         }
     }
 
@@ -124,10 +155,8 @@
         return;
     }
 
-    // Delete package cache
     [NSFileManager.defaultManager removeItemAtPath:packagePath error:nil];
 
-    // Download dependency client json (if available)
     NSDictionary<NSString *, NSString *> *depInfo = [ModpackUtils infoForDependencies:indexDict[@"dependencies"]];
     if (depInfo[@"json"]) {
         NSString *jsonPath = [NSString stringWithFormat:@"%1$s/versions/%2$@/%2$@.json", getenv("POJAV_GAME_DIR"), depInfo[@"id"]];
@@ -136,17 +165,20 @@
     }
     // TODO: automation for Forge
 
-    // Create profile
-    NSString *tmpIconPath = [NSTemporaryDirectory() stringByAppendingPathComponent:@"icon.png"];
-    PLProfiles.current.profiles[indexDict[@"name"]] = @{
+    NSString *profileName = indexDict[@"name"] ?: destPath.lastPathComponent;
+    NSMutableDictionary *profile = [@{
         @"gameDir": [NSString stringWithFormat:@"./custom_gamedir/%@", destPath.lastPathComponent],
-        @"name": indexDict[@"name"],
-        @"lastVersionId": depInfo[@"id"],
-        @"icon": [NSString stringWithFormat:@"data:image/png;base64,%@",
-            [[NSData dataWithContentsOfFile:tmpIconPath]
-            base64EncodedStringWithOptions:0]]
-    }.mutableCopy;
-    PLProfiles.current.selectedProfileName = indexDict[@"name"];
+        @"name": profileName,
+        @"lastVersionId": depInfo[@"id"] ?: indexDict[@"dependencies"][@"minecraft"] ?: @"latest-release"
+    } mutableCopy];
+    NSString *tmpIconPath = [NSTemporaryDirectory() stringByAppendingPathComponent:@"icon.png"];
+    NSData *iconData = [NSData dataWithContentsOfFile:tmpIconPath];
+    if (iconData.length) {
+        profile[@"icon"] = [NSString stringWithFormat:@"data:image/png;base64,%@", [iconData base64EncodedStringWithOptions:0]];
+    }
+    PLProfiles.current.profiles[profileName] = profile;
+    PLProfiles.current.selectedProfileName = profileName;
+    [PLProfiles.current save];
 }
 
 @end

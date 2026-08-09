@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Apply minimal Darwin/iOS build fixes to pinned MobileGlues 2.0.0.
+"""Apply Darwin/iOS compatibility and performance fixes to MobileGlues 2.0.0.
 
-The goal is to preserve upstream renderer behavior while replacing constructs
-that are valid on ELF/Linux but are rejected by Apple's Mach-O toolchain.
+The compatibility changes preserve upstream renderer behaviour where ELF/Linux
+constructs are rejected by Apple's Mach-O toolchain. The v3 build also corrects
+a MobileGlues CMake branch that leaves AppleClang on -O2 even for a Release
+build; the A13 artifact deliberately uses -O3 while keeping ThinLTO enabled.
 """
 
 from pathlib import Path
@@ -96,8 +98,7 @@ patch_exact(
 )
 
 # -Bsymbolic-functions is a GNU/ELF linker option and Apple's ld rejects it.
-# Keep it on Linux/Android, but do not pass it to Mach-O. This deliberately
-# avoids adding a speculative Apple replacement in the baseline build.
+# Keep it on Linux/Android, but do not pass it to Mach-O.
 patch_exact(
     CMAKE,
     '''if (NOT MSVC)
@@ -121,4 +122,37 @@ endif()
 endif()
 ''',
     "MobileGlues ELF-only symbolic linker option",
+)
+
+# MobileGlues 2.0 intentionally uses -O3 for GCC/Clang, but its compiler test
+# excludes AppleClang and the final else forces -O2. Because add_compile_options
+# appears after CMake's Release flags, that -O2 is the effective optimization
+# level in the v2 iOS artifact. v3 makes AppleClang an explicit Release-quality
+# path instead of silently overriding Release to -O2. ThinLTO remains enabled by
+# the upstream block above this one.
+patch_exact(
+    CMAKE,
+    '''if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MATCHES "AppleClang")
+    add_compile_options(-O3 -ffunction-sections -fdata-sections)
+    add_link_options(-Wl,--gc-sections)
+elif (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+#    add_compile_options(/O2)
+else ()
+    add_compile_options(-O2)
+endif()
+'''.replace("elif", "elseif"),
+    '''if (CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    # Enhanced iOS/A13: do not let MobileGlues' generic fallback downgrade a
+    # Release build to -O2. Keep the hot translation/draw paths at -O3.
+    add_compile_options(-O3)
+elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-O3 -ffunction-sections -fdata-sections)
+    add_link_options(-Wl,--gc-sections)
+elseif (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+#    add_compile_options(/O2)
+else ()
+    add_compile_options(-O2)
+endif()
+''',
+    "MobileGlues AppleClang -O3 release optimization",
 )
