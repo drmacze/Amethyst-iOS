@@ -1,112 +1,128 @@
-# Amethyst Enhanced v2
+# Amethyst Enhanced v3
 
-`enhanced/v2` is the second performance-and-usability branch for this Amethyst
-iOS fork. The primary validation target is Apple A13 / iPhone 11 running modern
-Minecraft Java with Fabric + Sodium, then Iris/shader testing after the base
-renderer is verified.
+`enhanced/v3` builds on the v2 Content Hub and A13 baseline, but its priority is
+now **sustained performance, repeat-launch stability, and fixing launcher/runtime
+work that can quietly waste memory or CPU**. The primary validation target is an
+Apple A13 / iPhone 11 running modern Minecraft Java with Fabric + Sodium, then
+Iris/shaders after the base renderer is stable.
 
-## Renderer and build baseline
+No fixed FPS uplift is claimed here. Performance changes stay only when an
+identical-world/on-device A/B test shows better FPS, frametime stability, loading
+behaviour, memory behaviour, or sustained thermals without new rendering errors.
 
-Enhanced v2 keeps the v1 renderer baseline and makes the A13 artifact explicit:
+## v3 performance changes
 
-- Keep current AngelAura Amethyst launcher/JIT/runtime fixes.
-- Build Amethyst native code with `RELEASE=1`.
+### MobileGlues 2.0 + A13 build path
+
 - Pin MobileGlues to upstream **2.0.0** commit
-  `fbc4e412e353302607ba36489b2dd573b5becb25`.
-- Build MobileGlues in **Release** and use its supported IPO/ThinLTO path.
-- Adapt Amethyst to the MobileGlues 2.x `MobileGlues-cpp` source layout and
-  static SPIRV-Cross configuration.
-- Compile the v2 A13 artifact with `-mcpu=apple-a13` for both Amethyst and
-  MobileGlues, while keeping the CMake CPU target configurable.
-- In the Enhanced build, renderer `Auto` resolves to MobileGlues instead of the
-  upstream ANGLE fallback so the renderer being optimized is actually used.
+  `fbc4e412e353302607ba36489b2dd573b5becb25` for reproducible renderer behaviour.
+- Build Amethyst and MobileGlues for `arm64` with `-mcpu=apple-a13`.
+- Build MobileGlues as **Release** with its supported ThinLTO/IPO path.
+- Correct MobileGlues' AppleClang optimization branch: upstream's compiler test
+  excludes AppleClang from the `-O3` path and its final fallback adds `-O2`.
+  Enhanced v3 explicitly keeps the iOS Release renderer at `-O3`.
+- Keep the Darwin/Mach-O compatibility patches required by MobileGlues 2.0:
+  ARB forwarding wrappers instead of ELF aliases, Darwin thread IDs instead of
+  Linux `__NR_gettid`, and no GNU `-Bsymbolic-functions` on Apple's linker.
+- Enhanced `Auto` renderer continues to resolve to MobileGlues so the optimized
+  renderer is the path actually exercised.
 
-This does not claim a specific FPS uplift until an identical-world A/B benchmark
-has been run on the target device.
+### Persistent iOS MobileGlues shader cache
 
-## iOS memory governor
+MobileGlues' upstream default state directory is `/sdcard/MG`, which is an
+Android path. Enhanced v3 assigns a writable, profile-local directory before the
+renderer is loaded:
 
-Upstream Auto RAM is based only on a percentage of physical device memory.
-Enhanced v2 keeps that value as an upper bound, but also asks iOS for the current
-per-process allocation headroom with `os_proc_available_memory()` and reserves a
-dynamic native margin for Metal, MobileGlues, LWJGL, JVM native allocations and
-the launcher. The selected values are logged as `[EnhancedMemory]`.
+`<gameDir>/.amethyst/mobileglues/2.0.0/`
 
-The purpose is sustained performance and fewer jetsam/native-memory failures,
-not maximizing the Java `-Xmx` number.
+This lets MobileGlues' `glsl_cache.tmp` survive normal iOS launches and avoids
+retranslating the same desktop GLSL on every clean start when the cache hits.
+The directory is versioned because the cache key is based on shader source; a
+future translator version should not silently consume translations produced by
+an older MobileGlues build. An explicit user-provided `MG_DIR_PATH` is respected.
 
-## Content Hub
+The launcher logs the selected directory and existing cache size as
+`[EnhancedRenderer]` diagnostics.
 
-Enhanced v2 adds a launcher-native Content Hub. It installs content into the
-currently selected profile instead of requiring Files.app directory work.
+### iOS memory governor and diagnostics
 
-### Providers
+Enhanced keeps the v2 Auto RAM governor. Physical RAM is an upper bound, while
+`os_proc_available_memory()` supplies current process headroom and the launcher
+reserves native memory for Metal, MobileGlues, LWJGL, JIT code and other JVM
+native allocations before selecting Java `-Xmx`.
 
-**Modrinth** works without a user API token and supports:
+At launch v3 also logs iOS thermal state and Low Power Mode under
+`[EnhancedPerf]`. These are diagnostic inputs for A/B tests rather than magic
+performance switches.
 
-- Mods
-- Modpacks
-- Resource packs
-- Shaders
+### Game-session lifecycle cleanup
 
-Search requests are filtered against the selected Minecraft version. Mod search
-also uses the selected profile's loader when it can be resolved (Fabric, Quilt,
-Forge or NeoForge).
+Upstream creates a `CADisplayLink` that drives gyro/controller ticks and stores
+block-based mouse/controller notification observer tokens. Enhanced v3 gives the
+display link an owner and explicitly cleans the game session before replacing
+the root view controller:
 
-**CurseForge** support is implemented through the documented authenticated REST
-API. CurseForge requires an approved `x-api-key`, so Enhanced does not ship a
-shared/unapproved key. A user/developer key can be entered from Content Hub and
-is stored in launcher preferences without being logged.
+- invalidate the input `CADisplayLink`;
+- remove mouse/controller notification observers;
+- clear mouse handlers and unregister controller callbacks;
+- stop Core Motion gyro updates;
+- restore the iOS idle timer;
+- deactivate the game audio session and notify other audio sessions;
+- make cleanup idempotent and keep `dealloc` as a fallback.
 
-CurseForge content classes/categories are discovered from the API at runtime;
-v2 intentionally does not depend on guessed historical class IDs. This enables
-Mods, Modpacks, Resource/Texture Packs, Shaders and Worlds when CurseForge's
-Minecraft taxonomy exposes the corresponding class/category.
+This prevents old game surfaces from continuing input work or being retained by
+observer/display-link relationships after returning to the launcher.
 
-### Automatic destinations
+### Lazy performance HUD support
 
-For the active profile, Content Hub installs to standard Minecraft locations:
+The private Metal HUD helper dylib is no longer loaded unconditionally on every
+game launch. Enhanced v3 loads it only when the user actually enables the
+performance HUD.
 
-- Mods -> `mods/`
-- Resource packs -> `resourcepacks/`
-- Shaders -> `shaderpacks/`
-- Worlds -> `saves/`
+## v3 system/reliability fixes
 
-Modrinth modpacks reuse Amethyst's existing Modrinth pack installer. CurseForge
-modpacks use `manifest.json`, resolve referenced project/file IDs through the
-CurseForge API, download provider-approved files, extract the pack's overrides,
-and create the launcher profile metadata. Fabric/Quilt loader metadata can be
-installed directly; Forge/NeoForge still rely on Amethyst's corresponding loader
-installation support when the loader is not already present.
+### Hardened modpack installation
 
-### Safety and management
+Modpack file paths are now treated as untrusted input. Modrinth pack files and
+ZIP override extraction reject absolute paths, home-prefixed paths and `..`
+traversal, standardize the destination, and require every output to remain below
+the intended pack directory.
 
-- Provider SHA-1 hashes are passed through Amethyst's existing verified download
-  pipeline when available.
-- World ZIP extraction rejects absolute paths and `..` traversal before writing.
-- Save folders get unique names instead of overwriting an existing world.
-- Content Hub records files/folders it installed in
-  `.amethyst/content-index.json` for launcher-side uninstall.
-- Uninstall refuses to remove paths outside the active profile directory.
-- Direct HTTPS import is available for single-file mods, resource packs, shaders
-  and worlds.
-- Direct URL modpack import is deliberately blocked because a pack must process
-  dependencies and loader/profile metadata rather than merely unzip files.
-- No scraping-only third-party content sites are built in. Providers should have
-  a stable documented API or be used through explicit direct-file import.
+The legacy Modrinth detail loader also no longer writes into empty mutable arrays
+by index; it appends normalized version data instead. Installed Modrinth profiles
+are saved explicitly after creation.
+
+### Content Hub retained from v2
+
+Content Hub still supports launcher-native discovery/installation for:
+
+- Modrinth: mods, modpacks, resource packs, shaders;
+- CurseForge: authenticated discovery/install where its Minecraft taxonomy and
+  third-party download permissions allow it;
+- direct HTTPS import for single-file mods, resource packs, shaders and worlds;
+- automatic profile destinations (`mods`, `resourcepacks`, `shaderpacks`,
+  `saves`);
+- launcher-side installed-content registry/uninstall;
+- protected world ZIP extraction and unique save-folder naming.
+
+CurseForge continues to require a user/developer approved `x-api-key`; Enhanced
+does not embed or share an unauthorized provider key.
 
 ## Validation order
 
-1. Install the v2 IPA and confirm the launcher reaches the existing profile list.
-2. Launch Minecraft with Fabric + Sodium and no shader; record FPS, 1% lows or
-   frametime behavior, memory log and device temperature in a fixed test scene.
-3. Open Content Hub, install one Modrinth shader and resource pack, confirm they
-   land in the active profile and Minecraft sees them.
-4. Install one mod matching the active Minecraft/Fabric version.
-5. Add Iris with shaders disabled, then enable one lightweight shader.
-6. Only after correctness is established, compare MobileGlues v2 against Zink
-   using identical world/settings and tune renderer-specific switches.
+1. Install the v3 IPA over v2 and confirm existing profiles, worlds, controls and
+   Content Hub state remain accessible.
+2. Launch Fabric + Sodium with no shader in a fixed world. Record FPS/frametime,
+   `[EnhancedMemory]`, `[EnhancedPerf]`, temperature and stability.
+3. Quit back to the launcher and launch the same profile repeatedly. Confirm old
+   input/gyro/audio work does not survive between sessions.
+4. After the first renderer run, confirm the profile-local MobileGlues directory
+   contains `glsl_cache.tmp`; compare a cold launch with a cache-hit launch.
+5. Test Content Hub shader/resource-pack installation and one Modrinth modpack.
+6. Add Iris with shaders disabled, then a lightweight shader.
+7. Compare MobileGlues v3 against the previous v2 artifact and Zink using the
+   same world, resolution, render distance, mods and power/thermal conditions.
 
-Performance changes should be kept only when they improve measurable FPS,
-frametime stability, load time or memory behavior without adding rendering
-errors or native crashes.
+Do not tune MobileGlues multi-draw ordering from guesses. MobileGlues 2.0 contains
+capability-aware backend selection and a benchmark facility; A13-specific order
+changes should follow device measurements rather than hard-coded assumptions.
