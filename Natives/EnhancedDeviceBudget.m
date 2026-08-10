@@ -1,6 +1,7 @@
 #import "EnhancedDeviceBudget.h"
 #import "LauncherPreferences.h"
 #import "utils.h"
+#import <math.h>
 
 static NSString *const kSmartModeKey = @"internal.smart_settings_mode";
 static NSString *const kSmartBaselineKey = @"internal.smart_settings_baseline";
@@ -53,6 +54,17 @@ static NSInteger sLastWarningBand = 0;
     return 1.0;
 }
 
++ (double)smartUtilizationForProfile:(NSString *)profile {
+    // Smart Settings intentionally keeps sustained-performance headroom. The
+    // meter's 100% point is therefore ABOVE the Smart recommendation and means
+    // the conservative device envelope has been exhausted, not that Smart itself
+    // is already red-lined.
+    if ([profile isEqualToString:@"compatibility"]) return 0.55;
+    if ([profile isEqualToString:@"performance"]) return 0.80;
+    if ([profile isEqualToString:@"max"]) return 0.90;
+    return 0.68;
+}
+
 + (double)rendererFactor:(NSString *)renderer {
     if ([renderer isEqualToString:@"libOSMesaModern.8.dylib"]) return 1.12;
     if ([renderer isEqualToString:@"libOSMesa.8.dylib"]) return 1.08;
@@ -63,15 +75,17 @@ static NSInteger sLastWarningBand = 0;
 
 + (double)currentPressure {
     NSDictionary *base = self.baseline;
-    double baselineResolution = MAX(40.0, [base[@"video.resolution"] doubleValue]);
-    if (baselineResolution <= 0.0) baselineResolution = 75.0;
+    double baselineResolution = [base[@"video.resolution"] doubleValue];
+    if (baselineResolution <= 0.0) baselineResolution = MAX(55.0, getPrefFloat(@"video.resolution"));
     double currentResolution = MAX(25.0, getPrefFloat(@"video.resolution"));
-
-    // Pixel workload grows with the square of linear render scale.
-    double pressure = pow(currentResolution / baselineResolution, 2.0);
 
     NSString *baseProfile = base[@"video.performance_profile"] ?: @"balanced";
     NSString *currentProfile = getPrefObject(@"video.performance_profile") ?: @"balanced";
+
+    // Start from the sustained utilization intentionally chosen by Smart. Pixel
+    // workload grows roughly with the square of a linear render-scale setting.
+    double pressure = [self smartUtilizationForProfile:baseProfile];
+    pressure *= pow(currentResolution / MAX(25.0, baselineResolution), 2.0);
     double baseProfileFactor = [self profileFactor:baseProfile];
     pressure *= [self profileFactor:currentProfile] / MAX(0.5, baseProfileFactor);
 
@@ -83,8 +97,8 @@ static NSInteger sLastWarningBand = 0;
     BOOL highRefresh = getPrefBool(@"video.max_framerate");
     if (highRefresh && !baselineHighRefresh) pressure *= 1.12;
 
-    // Disabling safety/cache features does not make the GPU intrinsically faster,
-    // but it reduces the stability margin represented by this meter.
+    // Disabling safety/cache features reduces the stability margin represented by
+    // this meter. These are small penalties, not claims of literal GPU load.
     if (!getPrefBool(@"video.thermal_governor")) pressure *= 1.08;
     if (!getPrefBool(@"video.shader_cache")) pressure *= 1.03;
     if ([getPrefObject(@"video.zink_descriptors") isEqualToString:@"lazy"] &&
@@ -93,12 +107,14 @@ static NSInteger sLastWarningBand = 0;
         [currentRenderer isEqualToString:@"libOSMesaModern.8.dylib"]) pressure *= 1.03;
 
     // Manual heap allocation can starve Metal/LWJGL/native memory. Compare it to
-    // the last Smart auto-RAM envelope only when Auto RAM is disabled.
+    // a conservative heap share only when Auto RAM is disabled.
     if (!getPrefBool(@"java.auto_ram")) {
         NSInteger manualMB = getPrefInt(@"java.allocated_memory");
         uint64_t physicalMB = NSProcessInfo.processInfo.physicalMemory >> 20;
         double conservativeHeap = MAX(384.0, physicalMB * 0.25);
-        if (manualMB > conservativeHeap) pressure *= MIN(1.30, 1.0 + ((manualMB - conservativeHeap) / MAX(512.0, conservativeHeap)) * 0.20);
+        if (manualMB > conservativeHeap) {
+            pressure *= MIN(1.30, 1.0 + ((manualMB - conservativeHeap) / MAX(512.0, conservativeHeap)) * 0.20);
+        }
     }
 
     return MAX(0.0, pressure);
@@ -120,10 +136,10 @@ static NSInteger sLastWarningBand = 0;
 + (NSString *)currentRiskText {
     double p = self.currentPressure;
     NSInteger percent = (NSInteger)llround(p * 100.0);
-    if (p >= 1.15) return [NSString stringWithFormat:@"%ld%% · Forced / high crash risk", (long)percent];
-    if (p >= 1.0) return [NSString stringWithFormat:@"%ld%% · Device envelope reached", (long)percent];
-    if (p >= 0.88) return [NSString stringWithFormat:@"%ld%% · High load", (long)percent];
-    if (p >= 0.70) return [NSString stringWithFormat:@"%ld%% · Moderate load", (long)percent];
+    if (p >= 1.15) return [NSString stringWithFormat:@"%ld%% · Forced / high stability risk", (long)percent];
+    if (p >= 1.0) return [NSString stringWithFormat:@"%ld%% · Estimated device envelope reached", (long)percent];
+    if (p >= 0.88) return [NSString stringWithFormat:@"%ld%% · Very high load", (long)percent];
+    if (p >= 0.70) return [NSString stringWithFormat:@"%ld%% · High load", (long)percent];
     return [NSString stringWithFormat:@"%ld%% · Stable headroom", (long)percent];
 }
 
@@ -166,8 +182,8 @@ static NSInteger sLastWarningBand = 0;
     if (!presenter || band < 3 || band <= previous) return;
 
     NSString *message = band >= 4
-        ? @"This custom configuration is substantially above the stability envelope calculated for this device. Minecraft may stutter, overheat, run out of memory, or force close. You can keep it for testing, but the launcher cannot guarantee stability."
-        : @"This custom configuration has reached the stability envelope calculated for this device. Higher settings may cause sustained throttling, lag, rendering errors, or force closes.";
+        ? @"This custom configuration is substantially above the stability envelope estimated for this device. Minecraft may stutter, overheat, run out of memory, show renderer errors, or force close. You can keep it for testing, but stability is not guaranteed."
+        : @"This custom configuration has reached the estimated stability envelope for this device. Higher settings may cause sustained throttling, lag, rendering errors, or force closes.";
 
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Custom Settings Warning"
         message:message preferredStyle:UIAlertControllerStyleAlert];
@@ -219,7 +235,7 @@ static NSInteger sLastWarningBand = 0;
     UIProgressView *bar = [view viewWithTag:4102];
     UILabel *detail = [view viewWithTag:4103];
     double pressure = self.currentPressure;
-    title.text = [NSString stringWithFormat:@"Device Budget · %@ mode", self.currentModeLabel];
+    title.text = [NSString stringWithFormat:@"Device Load Budget · %@ mode", self.currentModeLabel];
     bar.progress = (float)MIN(1.0, MAX(0.0, pressure));
     bar.progressTintColor = [self colorForPressure:pressure];
     detail.text = self.currentRiskText;
