@@ -105,12 +105,12 @@ patch_once(
 
 # Refresh after returning from a picker/child pane or after Smart rescan.
 view_anchor = '''- (void)viewWillDisappear:(BOOL)animated {\n'''
-view_block = '''- (void)viewWillAppear:(BOOL)animated {\n    [super viewWillAppear:animated];\n    UIView *header = self.tableView.tableHeaderView;\n    CGFloat width = self.tableView.bounds.size.width;\n    if (![header.accessibilityIdentifier isEqualToString:@"EnhancedDeviceBudgetHeader"] || fabs(header.bounds.size.width - width) > 1.0) {\n        self.tableView.tableHeaderView = [EnhancedDeviceBudget budgetHeaderViewForWidth:width];\n    } else {\n        [EnhancedDeviceBudget refreshBudgetHeader:header];\n    }\n}\n\n- (void)viewWillDisappear:(BOOL)animated {\n'''
+view_block = '''- (void)viewWillAppear:(BOOL)animated {\n    [super viewWillAppear:animated];\n    UIView *header = self.tableView.tableHeaderView;\n    CGFloat width = self.tableView.bounds.size.width;\n    if (![header.accessibilityIdentifier isEqualToString:@"EnhancedDeviceBudgetHeader"] || ABS(header.bounds.size.width - width) > 1.0) {\n        self.tableView.tableHeaderView = [EnhancedDeviceBudget budgetHeaderViewForWidth:width];\n    } else {\n        [EnhancedDeviceBudget refreshBudgetHeader:header];\n    }\n}\n\n- (void)viewWillDisappear:(BOOL)animated {\n'''
 patch_once(
     UI,
     view_anchor,
     view_block,
-    'fabs(header.bounds.size.width - width)',
+    'ABS(header.bounds.size.width - width)',
     "budget meter lifecycle refresh",
 )
 
