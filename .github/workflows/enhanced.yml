@@ -100,6 +100,9 @@ jobs:
       - name: Apply Enhanced v4 Smart Settings engine
         run: python3 scripts/patch_v4_smart_settings.py
 
+      - name: Apply Enhanced v4 Custom mode and device budget meter
+        run: python3 scripts/patch_v4_custom_budget.py
+
       - name: Apply Enhanced v4 dual-LWJGL selector
         run: python3 scripts/patch_v4_lwjgl_runtime.py
 
@@ -118,7 +121,12 @@ jobs:
           grep -n "performance_profile" Natives/PLPreferences.m Natives/LauncherPreferencesViewController.m
           grep -n "thermal_governor" Natives/PLPreferences.m Natives/LauncherPreferencesViewController.m
           grep -n "smart_settings" Natives/PLPreferences.m Natives/LauncherPreferencesViewController.m
+          grep -n "smart_settings_mode" Natives/PLPreferences.m Natives/EnhancedSmartSettings.m
+          grep -n "smart_settings_baseline" Natives/PLPreferences.m Natives/EnhancedSmartSettings.m Natives/EnhancedDeviceBudget.m
           grep -n "EnhancedSmartSettings.m" Natives/CMakeLists.txt
+          grep -n "EnhancedDeviceBudget.m" Natives/CMakeLists.txt
+          grep -n "Device Load Budget" Natives/EnhancedDeviceBudget.m
+          grep -n "userDidChangePreference" Natives/LauncherPreferencesViewController.m Natives/EnhancedDeviceBudget.m
           grep -n "runAutomaticScanIfNeededFrom" Natives/SceneDelegate.m Natives/EnhancedSmartSettings.m
           grep -n "recommendedResolutionFor" Natives/EnhancedSmartSettings.m
           grep -n '"-framework Metal"' Natives/CMakeLists.txt
