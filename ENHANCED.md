@@ -1,12 +1,12 @@
-# Amethyst Enhanced v4
+# Amethyst Enhanced v4.1 Stability
 
-`enhanced/v4` is the Apple-graphics/runtime modernization branch. It retains the v3.1 Content Hub, safe cache manager, A13 code generation, headroom-aware RAM policy and game-session cleanup, while replacing the oldest graphics components with pinned modern builds and adding a version-aware LWJGL runtime for Minecraft 26.x.
+`enhanced/v4.1-stability` is the stabilization branch on top of Enhanced v4. It retains the v3.1 Content Hub, safe cache manager, A13 code generation, headroom-aware RAM policy, game-session cleanup, isolated LWJGL runtimes, and the modern graphics experiments while tightening the build metadata so the packaged IPA describes the graphics stack that is actually compiled.
 
 The primary device is Apple A13 / iPhone 11. Build success is not treated as proof of GPU correctness: new Zink/MoltenVK and Minecraft 26.x paths remain explicit/diagnostic until a physical-device launch has been tested.
 
 ## Stable-first graphics policy
 
-Enhanced v4 deliberately does **not** mean "follow every upstream main branch". The graphics stack is pinned so an IPA can be reproduced, and stable/bug-fix releases are preferred when a newer development release exists.
+Enhanced deliberately does **not** mean "follow every upstream main branch". The graphics stack is pinned so an IPA can be reproduced, and stable/bug-fix releases are preferred when they are compatible with Amethyst's current presentation bridge.
 
 ### MobileGlues Enhanced
 
@@ -18,14 +18,16 @@ Enhanced v4 deliberately does **not** mean "follow every upstream main branch". 
 
 ### Zink Modern
 
-A second Zink entry is added instead of overwriting the known recovery renderer:
+A second Zink entry is added instead of overwriting the legacy recovery renderer:
 
-- **Zink Modern — Mesa 26.1.6 / MoltenVK 1.4.2** -> `libOSMesaModern.8.dylib`
-- **Zink Legacy — Mesa 21 recovery** -> original `libOSMesa.8.dylib`
+- **Zink Modern — Mesa 25.0.7 / MoltenVK 1.4.2** -> `libOSMesaModern.8.dylib`
+- **Zink Legacy — bundled Mesa 21 recovery** -> original `libOSMesa.8.dylib`
 
-Mesa 26.1.6 is used because it is the current 26.1 bug-fix line selected for stability; the newer 26.2.0 line is not used as the v4 baseline while it is the new development series. Modern Mesa is built Release/O3 for arm64 A13 with Gallium Zink and OSMesa, LLVM disabled, and a dedicated disk shader cache under `<POJAV_HOME>/.amethyst/mesa/26.1.6/`.
+Mesa 25.0.7 is intentionally the modern compatibility baseline because it is the last upstream release before Mesa removed the OSMesa frontend in 25.1. Amethyst's current iOS Zink bridge still loads an OSMesa-compatible dylib, so Mesa 26.1.6 cannot honestly be packaged as a drop-in replacement without first implementing a non-OSMesa presentation path. The manifest therefore records Mesa 25.0.7 as `mesaModern` and keeps Mesa 26.1.6 as a deferred `mesaFuture` target.
 
-Zink Modern remains opt-in initially. Amethyst's OSMesa presentation bridge still has different performance characteristics from the direct Metal/ANGLE path, and a modern driver does not by itself prove that every A13 pipeline/vertex-format case is fixed.
+The modern Mesa build uses Release/O3 for arm64 A13 with Gallium Zink and OSMesa, LLVM disabled, and a dedicated disk shader cache under `<POJAV_HOME>/.amethyst/mesa/25.0.7/`.
+
+Zink Modern remains opt-in initially. Amethyst's OSMesa presentation bridge still has different performance characteristics from the direct Metal/ANGLE path, and a newer driver does not by itself prove that every A13 pipeline/vertex-format case is fixed.
 
 ### MoltenVK 1.4.2
 
@@ -33,7 +35,7 @@ The modern Vulkan-on-Metal path is rebuilt against MoltenVK 1.4.2. The previous 
 
 ### ANGLE Metal
 
-ANGLE is rebuilt for iOS arm64 from Chromium branch `chromium/7871`, with Metal enabled and unused desktop/D3D/SwiftShader/Vulkan backends disabled. A shipping Chromium stable branch is used rather than arbitrary ANGLE `main` so the renderer is reproducible and closer to a production-tested branch.
+ANGLE is rebuilt for iOS arm64 from Chromium branch `chromium/7871`, with Metal enabled and unused desktop/D3D/SwiftShader/Vulkan backends disabled. A shipping Chromium branch is used rather than arbitrary ANGLE `main` so the renderer is reproducible and closer to a production-tested branch.
 
 This also upgrades the GLES implementation available to MobileGlues when its ANGLE-backed mode is enabled.
 
@@ -50,11 +52,13 @@ The modern iOS build enables the modules required by Mojang's newer native boots
 
 The Java bootstrap classpath no longer relies on wildcard ordering to choose between incompatible LWJGL APIs. It explicitly excludes every generic `lwjgl*.jar` and then appends exactly one versioned runtime. Modern native libraries are likewise kept in a separate directory and selected with `org.lwjgl.librarypath`, so an older Minecraft session cannot accidentally bind to a newer STB/core dylib.
 
-This directly addresses the current Minecraft 26.2 startup blocker where Amethyst's bundled 3.3.3 path lacks `org.lwjgl.util.spvc.Spvc`. It does **not** claim that every future 26.x snapshot is automatically guaranteed: Mojang may raise Java/JNA/LWJGL requirements again, and future metadata must still be validated.
+This directly addresses the Minecraft 26.x startup blocker where Amethyst's bundled 3.3.3 path lacks `org.lwjgl.util.spvc.Spvc`. It does **not** claim that every future 26.x snapshot is automatically guaranteed: Mojang may raise Java/JNA/LWJGL requirements again, and future metadata must still be validated.
 
 ## JNA policy
 
 Enhanced does not blindly replace Mojang's newer JNA Java artifact with the newest available release. JNA's Java/native ABI is version-sensitive. Existing Amethyst logic allows newer Mojang JNA versions instead of forcing the older 5.13 jar, and v4 keeps that behavior while the exact iOS native compatibility is validated from device logs. If a future Minecraft release raises the required native ABI, the correct fix is an exact-version signed iOS native runtime, not an unrelated newer `libjnidispatch` dropped into the sandbox.
+
+Controlify/hid4java is a separate compatibility concern on jailed iOS: mods may ask JNA to extract a native library into the app data/cache directory, which iOS can refuse to load because the extracted file is not a signed executable image. Launcher-side work must therefore fail safely or route supported controller input through the native iOS GameController path rather than pretending desktop HID/JNA loading is available.
 
 ## Performance and system work retained
 
@@ -77,7 +81,7 @@ Enhanced does not blindly replace Mojang's newer JNA Java artifact with the newe
 3. Iris with shader disabled.
 4. Lightweight Iris shader on MobileGlues.
 5. Zink Modern no shader, then Iris only if the base world is correct.
-6. Zink Legacy remains the recovery comparison.
+6. Zink Legacy remains a recovery comparison only; an A13 pipeline-format crash in legacy Mesa is a native renderer failure, not a JVM problem.
 
 ### Minecraft 26.x
 
@@ -89,6 +93,10 @@ Enhanced does not blindly replace Mojang's newer JNA Java artifact with the newe
 ### A13 performance
 
 Compare identical world, resolution, render distance, FPS cap, mods, Low Power Mode and thermal state. Record average FPS, frametime spikes/1% lows, renderer cache cold/hit behavior, memory headroom, temperature/throttling and any native GPU error. No renderer becomes the new automatic default solely because it has a newer version number.
+
+## Build-integrity rule
+
+The workflow must not advertise a graphics version that it does not compile. `graphics-stack-v4.json`, `scripts/build_graphics_stack_v4.sh`, runtime renderer labels, cache paths and workflow verification must agree on the shipping modern Mesa version. Mesa 26.x remains a future migration target until Amethyst has a non-OSMesa presentation frontend.
 
 ## Fail-safe rule
 
