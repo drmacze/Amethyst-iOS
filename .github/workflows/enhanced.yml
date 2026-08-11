@@ -52,9 +52,11 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          brew install make ldid wget cmake ninja meson pkg-config python@3.12 ant autoconf automake libtool
+          brew install make ldid wget cmake ninja meson pkg-config python@3.12 ant autoconf automake libtool bison
           echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix python@3.12)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+          "$(brew --prefix bison)/bin/bison" --version
           python3 -m pip install --user --break-system-packages mako pyyaml packaging
           /usr/libexec/java_home -V || true
           env | grep -E '^JAVA_HOME_(8|25)_' || true
