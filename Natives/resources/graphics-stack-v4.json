@@ -7,10 +7,17 @@
     "policy": "pinned-known-good-core"
   },
   "mesaModern": {
-    "version": "26.1.6",
-    "sha256": "5296b88a0f1e012e2cb9ada150a2bbadf728ca81e5a4fb2ab43c83a4d2158606",
+    "version": "25.0.7",
+    "sha256": "592272df3cf01e85e7db300c449df5061092574d099da275d19e97ef0510f8a6",
     "driver": "zink",
+    "frontend": "OSMesa compatibility bridge",
+    "policy": "last-upstream-release-before-OSMesa-removal",
     "status": "experimental-until-A13-device-validation"
+  },
+  "mesaFuture": {
+    "version": "26.1.6",
+    "status": "deferred-until-non-OSMesa-presenter",
+    "reason": "upstream Mesa 25.1+ removed OSMesa; current Amethyst iOS Zink ABI loads libOSMesa"
   },
   "moltenVK": {
     "version": "1.4.2",
