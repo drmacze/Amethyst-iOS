@@ -1,27 +1,32 @@
-name: Amethyst Enhanced v3.1 A13
+name: Amethyst Enhanced v4 A13
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - enhanced/v3
   pull_request:
     branches:
-      - enhanced/v2
+      - enhanced/v3
       - main
 
 permissions:
   contents: read
 
+concurrency:
+  group: amethyst-enhanced-v4-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   MOBILEGLUES_COMMIT: fbc4e412e353302607ba36489b2dd573b5becb25
+  MESA_VERSION: 26.1.6
+  MOLTENVK_VERSION: 1.4.2
+  ANGLE_CHROMIUM_BRANCH: chromium/7871
+  LWJGL_IOS_BRANCH: wip/rebase_3.4.1
   AMETHYST_CPU_TARGET: apple-a13
 
 jobs:
   build-ios:
-    name: Build Amethyst Enhanced v3.1 (A13 arm64)
-    runs-on: macos-latest
-    timeout-minutes: 90
+    name: Build Amethyst Enhanced v4 (A13 arm64)
+    runs-on: macos-26
+    timeout-minutes: 300
 
     steps:
       - name: Checkout Amethyst
@@ -30,14 +35,27 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Install build dependencies
-        run: |
-          brew install make ldid wget cmake
-          brew install --cask temurin@8
-          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
-          /usr/libexec/java_home -V
+      - name: Set up JDK 8 and 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: |
+            8
+            25
 
-      - name: Pin MobileGlues 2.0.0 and nested dependencies
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          brew install make ldid wget cmake ninja meson pkg-config python@3.12 ant autoconf automake libtool
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix python@3.12)/bin" >> "$GITHUB_PATH"
+          python3 -m pip install --user --break-system-packages mako pyyaml packaging
+          /usr/libexec/java_home -V || true
+          env | grep -E '^JAVA_HOME_(8|25)_' || true
+          xcodebuild -version
+
+      - name: Pin MobileGlues core and nested dependencies
         shell: bash
         run: |
           set -euxo pipefail
@@ -49,62 +67,133 @@ jobs:
           test -f "$MG/MobileGlues-cpp/CMakeLists.txt"
           echo "Pinned MobileGlues: $(git -C "$MG" rev-parse HEAD)"
 
+      - name: Build Chrome-stable ANGLE Metal backend
+        shell: bash
+        run: bash scripts/build_angle_v4.sh
+
+      - name: Build stable MoltenVK and modern Mesa Zink
+        shell: bash
+        run: |
+          set -o pipefail
+          bash scripts/build_graphics_stack_v4.sh 2>&1 | tee "$GITHUB_WORKSPACE/graphics-build.log"
+
+      - name: Upload graphics build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Amethyst-Enhanced-v4-graphics-build-log
+          path: graphics-build.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Build isolated LWJGL 3.4.1 iOS runtime
+        shell: bash
+        run: bash scripts/build_lwjgl_v4.sh
+
       - name: Apply MobileGlues iOS performance and compatibility patches
         run: python3 scripts/patch_mobileglues_ios.py
 
-      - name: Apply Enhanced v3 runtime lifecycle fixes
+      - name: Apply Enhanced runtime lifecycle fixes
         run: python3 scripts/patch_enhanced_runtime_v3.py
 
-      - name: Prepare Enhanced v3 performance build tree
+      - name: Prepare Enhanced performance build tree
         run: python3 scripts/prepare_enhanced_build.py
 
-      - name: Add Enhanced v3.1 cache manager
-        run: |
-          python3 scripts/patch_cache_manager_v31.py
-          grep -n "EnhancedCacheManager.m" Natives/CMakeLists.txt
-          grep -n "Clear Cache" Natives/LauncherMenuViewController.m
-          grep -n "performPendingRendererCacheCleanup" Natives/JavaLauncher.m
-          grep -n "Amethyst Enhanced v3.1" Natives/Info.plist
+      - name: Add Enhanced safe cache manager
+        run: python3 scripts/patch_cache_manager_v31.py
 
-      - name: Verify performance build configuration
+      - name: Apply Enhanced v4 graphics integration
+        run: python3 scripts/patch_v4_graphics.py
+
+      - name: Apply Enhanced v4 adaptive performance policy
+        run: python3 scripts/patch_v4_performance.py
+
+      - name: Apply Enhanced v4 Smart Settings engine
+        run: python3 scripts/patch_v4_smart_settings.py
+
+      - name: Apply Enhanced v4 Custom mode and device budget meter
+        run: python3 scripts/patch_v4_custom_budget.py
+
+      - name: Apply Enhanced v4 dual-LWJGL selector
+        run: python3 scripts/patch_v4_lwjgl_runtime.py
+
+      - name: Verify v4 build inputs
+        shell: bash
         run: |
+          set -euxo pipefail
           grep -n "MobileGlues-cpp" Makefile
           grep -n "CMAKE_BUILD_TYPE=Release" Makefile
           grep -n -- "-mcpu=apple-a13" Makefile Natives/CMakeLists.txt
           grep -nF "add_compile_options(-O3)" Natives/external/MobileGlues/MobileGlues-cpp/CMakeLists.txt
+          grep -n "Zink Modern" Natives/LauncherPreferences.m
+          grep -n "RENDERER_NAME_VK_ZINK_MODERN" Natives/utils.h
+          grep -n "EnhancedGraphics" Natives/JavaLauncher.m
+          grep -n "EnhancedPerformance" Natives/JavaLauncher.m
+          grep -n "performance_profile" Natives/PLPreferences.m Natives/LauncherPreferencesViewController.m
+          grep -n "thermal_governor" Natives/PLPreferences.m Natives/LauncherPreferencesViewController.m
+          grep -n "smart_settings" Natives/PLPreferences.m Natives/LauncherPreferencesViewController.m
+          grep -n "smart_settings_mode" Natives/PLPreferences.m Natives/EnhancedSmartSettings.m
+          grep -n "smart_settings_baseline" Natives/PLPreferences.m Natives/EnhancedSmartSettings.m Natives/EnhancedDeviceBudget.m
+          grep -n "EnhancedSmartSettings.m" Natives/CMakeLists.txt
+          grep -n "EnhancedDeviceBudget.m" Natives/CMakeLists.txt
+          grep -n "Device Load Budget" Natives/EnhancedDeviceBudget.m
+          grep -n "userDidChangePreference" Natives/LauncherPreferencesViewController.m Natives/EnhancedDeviceBudget.m
+          grep -n "runAutomaticScanIfNeededFrom" Natives/SceneDelegate.m Natives/EnhancedSmartSettings.m
+          grep -n "recommendedResolutionFor" Natives/EnhancedSmartSettings.m
+          grep -n '"-framework Metal"' Natives/CMakeLists.txt
+          grep -n "EnhancedRuntime" Natives/JavaLauncher.m
           grep -n "EnhancedMemory" Natives/JavaLauncher.m
-          grep -n "MG_DIR_PATH" Natives/JavaLauncher.m
-          grep -n "EnhancedRenderer" Natives/JavaLauncher.m
-          grep -n "EnhancedPerf" Natives/JavaLauncher.m
-          grep -n "EnhancedLifecycle" Natives/SurfaceViewController.m
-          grep -n "enhancedPrepareForExit" Natives/ios_uikit_bridge.m
+          grep -n "performPendingRendererCacheCleanup" Natives/JavaLauncher.m
+          grep -n "EnhancedUseModernLWJGL" Natives/JavaLauncher.m
+          plutil -p Natives/Info.plist | grep 'Amethyst Enhanced v4'
+          file Natives/resources/Frameworks/libMoltenVK.dylib
+          file Natives/resources/Frameworks/libOSMesaModern.8.dylib
+          file Natives/resources/Frameworks/libEGL.framework/libEGL
+          file Natives/resources/Frameworks/libGLESv2.framework/libGLESv2
+          file Natives/resources/Frameworks/lwjgl-modern/liblwjgl.dylib
+          test -f Natives/resources/Frameworks/lwjgl-modern/liblwjgl_spvc.dylib
+          test -s JavaApp/libs/others/lwjgl-legacy.jar
+          test -s JavaApp/libs/others/lwjgl-modern-3.4.1.jar
+          otool -L Natives/resources/Frameworks/libOSMesaModern.8.dylib
 
       - name: Build optimized IPA
         shell: bash
         run: |
           set -euxo pipefail
           export PATH="$(brew --prefix)/bin:$PATH"
-          gmake -j"$(sysctl -n hw.ncpu)" dsym package PLATFORM=2 RELEASE=1
+          BOOTJDK="${JAVA_HOME_8_ARM64:-${JAVA_HOME_8_X64:-}}/bin"
+          test -x "$BOOTJDK/javac"
+          gmake -j"$(sysctl -n hw.logicalcpu)" dsym package PLATFORM=2 RELEASE=1 BOOTJDK="$BOOTJDK"
 
-      - name: Verify and name artifact
+      - name: Verify and name v4 artifact
         shell: bash
         run: |
           set -euxo pipefail
           IPA="$(find artifacts -maxdepth 1 -type f -name 'org.angelauramc.amethyst-*-ios.ipa' | head -n 1)"
           test -n "$IPA"
           test -s "$IPA"
-          cp "$IPA" artifacts/Amethyst-Enhanced-v3.1-A13-iOS.ipa
-          shasum -a 256 artifacts/Amethyst-Enhanced-v3.1-A13-iOS.ipa | tee artifacts/Amethyst-Enhanced-v3.1-A13-iOS.sha256
-          unzip -l artifacts/Amethyst-Enhanced-v3.1-A13-iOS.ipa | grep -q 'Frameworks/libmobileglues.dylib'
-          ls -lh artifacts/Amethyst-Enhanced-v3.1-A13-iOS.ipa
+          cp "$IPA" artifacts/Amethyst-Enhanced-v4-A13-iOS.ipa
+          shasum -a 256 artifacts/Amethyst-Enhanced-v4-A13-iOS.ipa | tee artifacts/Amethyst-Enhanced-v4-A13-iOS.sha256
+          unzip -l artifacts/Amethyst-Enhanced-v4-A13-iOS.ipa | tee /tmp/v4-ipa.txt >/dev/null
+          grep -q 'Frameworks/libmobileglues.dylib' /tmp/v4-ipa.txt
+          grep -q 'Frameworks/libOSMesaModern.8.dylib' /tmp/v4-ipa.txt
+          grep -q 'Frameworks/libOSMesa.8.dylib' /tmp/v4-ipa.txt
+          grep -q 'Frameworks/libMoltenVK.dylib' /tmp/v4-ipa.txt
+          grep -q 'Frameworks/libEGL.framework/libEGL' /tmp/v4-ipa.txt
+          grep -q 'Frameworks/libGLESv2.framework/libGLESv2' /tmp/v4-ipa.txt
+          grep -q 'Frameworks/lwjgl-modern/liblwjgl_spvc.dylib' /tmp/v4-ipa.txt
+          grep -q 'libs/lwjgl-modern-3.4.1.jar' /tmp/v4-ipa.txt
+          grep -q 'libs/lwjgl-legacy.jar' /tmp/v4-ipa.txt
+          grep -q 'graphics-stack-v4.json' /tmp/v4-ipa.txt
+          ls -lh artifacts/Amethyst-Enhanced-v4-A13-iOS.ipa
 
-      - name: Upload Amethyst Enhanced v3.1 IPA
+      - name: Upload Amethyst Enhanced v4 IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Amethyst-Enhanced-v3.1-A13-iOS
+          name: Amethyst-Enhanced-v4-A13-iOS
           path: |
-            artifacts/Amethyst-Enhanced-v3.1-A13-iOS.ipa
-            artifacts/Amethyst-Enhanced-v3.1-A13-iOS.sha256
+            artifacts/Amethyst-Enhanced-v4-A13-iOS.ipa
+            artifacts/Amethyst-Enhanced-v4-A13-iOS.sha256
           if-no-files-found: error
           retention-days: 14
 
@@ -112,7 +201,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Amethyst-Enhanced-v3.1-dSYM
+          name: Amethyst-Enhanced-v4-dSYM
           path: artifacts/AngelAuraAmethyst.dSYM
           if-no-files-found: ignore
           retention-days: 7

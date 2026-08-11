@@ -10,6 +10,10 @@ static NSString *AERendererRoot(void) {
     return [[AEHome() stringByAppendingPathComponent:@".amethyst"] stringByAppendingPathComponent:@"mobileglues"];
 }
 
+static NSString *AEMesaRendererRoot(void) {
+    return [[AEHome() stringByAppendingPathComponent:@".amethyst"] stringByAppendingPathComponent:@"mesa"];
+}
+
 static NSString *AERendererResetMarker(void) {
     return [[AEHome() stringByAppendingPathComponent:@".amethyst"] stringByAppendingPathComponent:@"renderer-cache-reset.pending"];
 }
@@ -52,17 +56,26 @@ static NSString *AEFormatBytes(unsigned long long bytes) {
 static NSArray<NSString *> *AERendererCacheFiles(void) {
     NSMutableArray<NSString *> *paths = [NSMutableArray new];
     NSFileManager *fm = NSFileManager.defaultManager;
-    NSString *root = AERendererRoot();
-    NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:root];
+
+    // MobileGlues keeps config/stats next to its translated GLSL cache. Remove
+    // only cache artefacts so renderer settings and diagnostics survive.
+    NSString *mobileGluesRoot = AERendererRoot();
+    NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:mobileGluesRoot];
     for (NSString *relative in enumerator) {
         NSString *name = relative.lastPathComponent.lowercaseString;
         if ([name isEqualToString:@"glsl_cache.tmp"] ||
             [name isEqualToString:@"glsl_cache.tmp.new"] ||
             [name hasPrefix:@"shader_cache"] ||
             [name hasPrefix:@"pipeline_cache"]) {
-            [paths addObject:[root stringByAppendingPathComponent:relative]];
+            [paths addObject:[mobileGluesRoot stringByAppendingPathComponent:relative]];
         }
     }
+
+    // Enhanced owns this directory exclusively through MESA_SHADER_CACHE_DIR.
+    // Deleting the root is safer than guessing Mesa's internal cache filenames,
+    // which can change across stable Mesa releases.
+    NSString *mesaRoot = AEMesaRendererRoot();
+    if ([fm fileExistsAtPath:mesaRoot]) [paths addObject:mesaRoot];
     return paths;
 }
 
@@ -138,7 +151,7 @@ static BOOL AEDeleteLauncherCache(NSError **outError) {
     unsigned long long launcherBytes = AELauncherCacheSize();
     unsigned long long allBytes = rendererBytes + launcherBytes;
 
-    NSString *message = [NSString stringWithFormat:@"Renderer: %@\nLauncher/network: %@\n\nWorlds, mods, resource packs, shaders and profiles are never deleted.",
+    NSString *message = [NSString stringWithFormat:@"Renderer (MobileGlues + Mesa/Zink): %@\nLauncher/network: %@\n\nWorlds, mods, resource packs, shaders and profiles are never deleted.",
                          AEFormatBytes(rendererBytes), AEFormatBytes(launcherBytes)];
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Clear Cache"
                                                                     message:message
@@ -150,7 +163,7 @@ static BOOL AEDeleteLauncherCache(NSError **outError) {
         NSError *error = nil;
         BOOL ok = AEDeleteRendererCache(&error);
         NSString *body = ok
-            ? @"Renderer shader/pipeline cache was cleared. For a complete reset, close and reopen Amethyst before the next Minecraft launch."
+            ? @"MobileGlues and Mesa/Zink shader/pipeline caches were cleared. For a complete reset, close and reopen Amethyst before the next Minecraft launch."
             : [NSString stringWithFormat:@"Some renderer cache files could not be removed: %@", error.localizedDescription ?: @"Unknown error"];
         UIAlertController *done = [UIAlertController alertControllerWithTitle:ok ? @"Renderer Cache Cleared" : @"Clear Cache Failed"
                                                                        message:body
