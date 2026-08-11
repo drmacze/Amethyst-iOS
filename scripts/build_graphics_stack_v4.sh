@@ -63,8 +63,6 @@ curl -fL --retry 4 --retry-delay 2 \
 echo "$MESA_SHA256  $WORK/mesa-${MESA_VERSION}.tar.xz" | shasum -a 256 -c -
 tar -xJf "$WORK/mesa-${MESA_VERSION}.tar.xz" -C "$WORK"
 
-# Fail with an explicit diagnosis if this compatibility frontend disappears
-# instead of feeding an invalid option to Meson and wasting another full CI run.
 MESA_OPTIONS="$WORK/mesa-$MESA_VERSION/meson_options.txt"
 if [[ ! -f "$MESA_OPTIONS" ]] || ! grep -q "'osmesa'" "$MESA_OPTIONS"; then
   echo "Mesa $MESA_VERSION does not expose the OSMesa frontend required by Amethyst's current Zink bridge." >&2
@@ -129,7 +127,9 @@ EOF
 # Amethyst explicitly exports GALLIUM_DRIVER=zink before loading the modern
 # renderer, and Mesa's sw_screen_create() honours that explicit driver first.
 # Vulkan itself is supplied by MoltenVK, so no Mesa native Vulkan driver or
-# desktop WSI platform belongs in this iOS build.
+# desktop WSI platform belongs in this iOS build. Zstd is disabled because a
+# host Homebrew zstd must never be linked into an iOS dylib; the system zlib
+# fallback remains available for cache compression.
 MESON_ARGS=(
   --cross-file "$WORK/ios-arm64.ini"
   --buildtype release
@@ -172,12 +172,22 @@ done
 printf '\n=== Enhanced v4 graphics binary verification ===\n'
 file "$FRAMEWORKS/libMoltenVK.dylib" "$FRAMEWORKS/libOSMesaModern.8.dylib"
 echo 'MoltenVK version strings:'
-strings "$FRAMEWORKS/libMoltenVK.dylib" | grep -m3 -E 'MoltenVK [0-9]|1\.4\.2' || true
+MVK_STRINGS="$WORK/moltenvk.strings"
+strings "$FRAMEWORKS/libMoltenVK.dylib" > "$MVK_STRINGS"
+grep -m3 -E 'MoltenVK [0-9]|1\.4\.2' "$MVK_STRINGS" || true
+
 echo 'Mesa version strings:'
-strings "$FRAMEWORKS/libOSMesaModern.8.dylib" | grep -m3 -E '^Mesa [0-9]|25\.0\.7' || true
+MESA_STRINGS="$WORK/mesa-modern.strings"
+strings "$FRAMEWORKS/libOSMesaModern.8.dylib" > "$MESA_STRINGS"
+grep -m3 -E '^Mesa [0-9]|25\.0\.7' "$MESA_STRINGS" || true
+
 echo 'Modern OSMesa linkage:'
 otool -L "$FRAMEWORKS/libOSMesaModern.8.dylib"
-if ! strings "$FRAMEWORKS/libOSMesaModern.8.dylib" | grep -q 'zink'; then
+
+# Do not pipe `strings` directly into grep -q under pipefail: grep intentionally
+# exits after the first match and can SIGPIPE `strings`, which falsely turns a
+# successful Zink build into a verification failure. Inspect the completed dump.
+if ! grep -qi 'zink' "$MESA_STRINGS"; then
   echo "Built libOSMesa does not contain Zink symbols/strings; refusing to package a mislabeled software renderer." >&2
   exit 25
 fi
