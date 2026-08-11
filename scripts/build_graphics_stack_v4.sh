@@ -87,6 +87,8 @@ cat > "$WORK/ios-arm64.ini" <<EOF
 [binaries]
 c = ['xcrun', '--sdk', 'iphoneos', 'clang']
 cpp = ['xcrun', '--sdk', 'iphoneos', 'clang++']
+objc = ['xcrun', '--sdk', 'iphoneos', 'clang']
+objcpp = ['xcrun', '--sdk', 'iphoneos', 'clang++']
 ar = ['xcrun', '--sdk', 'iphoneos', 'ar']
 strip = ['xcrun', '--sdk', 'iphoneos', 'strip']
 pkg-config = 'pkg-config'
@@ -100,8 +102,12 @@ endian = 'little'
 [built-in options]
 c_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-mcpu=apple-a13', '-O3']
 cpp_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-mcpu=apple-a13', '-O3']
+objc_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-mcpu=apple-a13', '-O3']
+objcpp_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-mcpu=apple-a13', '-O3']
 c_link_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-Wl,-dead_strip']
 cpp_link_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-Wl,-dead_strip']
+objc_link_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-Wl,-dead_strip']
+objcpp_link_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-Wl,-dead_strip']
 EOF
 
 # OSMesa in Mesa 25.0 requires at least one software Gallium driver to build
