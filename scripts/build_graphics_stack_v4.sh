@@ -90,6 +90,13 @@ fi
 echo "Mesa moltenvk-dir: $MVK_SDK"
 find "$MVK_SDK/include" -maxdepth 3 -type f | head -30
 
+# Mesa's generated Vulkan dispatch table contains both the legacy MoltenVK iOS
+# surface entry points and the modern VK_EXT_metal_surface / metal-objects entry
+# points. Vulkan headers expose those declarations only when these platform guard
+# macros are enabled. Keep them target-wide so every generated Zink TU sees the
+# same Vulkan ABI declarations.
+VK_IOS_DEFINES="-DVK_USE_PLATFORM_IOS_MVK -DVK_USE_PLATFORM_METAL_EXT"
+
 cat > "$WORK/ios-arm64.ini" <<EOF
 [binaries]
 c = ['xcrun', '--sdk', 'iphoneos', 'clang']
@@ -107,10 +114,10 @@ cpu = 'arm64'
 endian = 'little'
 
 [built-in options]
-c_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-mcpu=apple-a13', '-O3']
-cpp_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-mcpu=apple-a13', '-O3']
-objc_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-mcpu=apple-a13', '-O3']
-objcpp_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-mcpu=apple-a13', '-O3']
+c_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-mcpu=apple-a13', '-O3', '-DVK_USE_PLATFORM_IOS_MVK', '-DVK_USE_PLATFORM_METAL_EXT']
+cpp_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-mcpu=apple-a13', '-O3', '-DVK_USE_PLATFORM_IOS_MVK', '-DVK_USE_PLATFORM_METAL_EXT']
+objc_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-mcpu=apple-a13', '-O3', '-DVK_USE_PLATFORM_IOS_MVK', '-DVK_USE_PLATFORM_METAL_EXT']
+objcpp_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-mcpu=apple-a13', '-O3', '-DVK_USE_PLATFORM_IOS_MVK', '-DVK_USE_PLATFORM_METAL_EXT']
 c_link_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-Wl,-dead_strip']
 cpp_link_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-Wl,-dead_strip']
 objc_link_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-Wl,-dead_strip']
