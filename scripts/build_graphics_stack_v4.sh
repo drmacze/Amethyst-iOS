@@ -5,8 +5,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="${RUNNER_TEMP:-/tmp}/amethyst-v4-graphics"
 SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)"
 MVK_TAG="v1.4.2"
-MESA_VERSION="26.1.6"
-MESA_SHA256="5296b88a0f1e012e2cb9ada150a2bbadf728ca81e5a4fb2ab43c83a4d2158606"
+# Mesa 25.0.7 is intentionally the modern OSMesa/Zink compatibility baseline.
+# Mesa removed the OSMesa frontend in 25.1, while Amethyst's iOS Zink bridge
+# still loads libOSMesa. Keep newer Mesa migration separate until the launcher
+# has a non-OSMesa presentation frontend.
+MESA_VERSION="25.0.7"
+MESA_SHA256="592272df3cf01e85e7db300c449df5061092574d099da275d19e97ef0510f8a6"
 FRAMEWORKS="$ROOT/Natives/resources/Frameworks"
 mkdir -p "$WORK" "$FRAMEWORKS"
 rm -rf "$WORK/MoltenVK" "$WORK/mesa-$MESA_VERSION" "$WORK/mesa-build"
@@ -52,12 +56,24 @@ cp "$MVK_BIN" "$FRAMEWORKS/libMoltenVK.dylib"
 install_name_tool -id @rpath/libMoltenVK.dylib "$FRAMEWORKS/libMoltenVK.dylib" || true
 popd
 
-printf '\n=== Enhanced v4: Mesa %s / Zink / OSMesa ===\n' "$MESA_VERSION"
+printf '\n=== Enhanced v4: Mesa %s / OSMesa-Zink / MoltenVK ===\n' "$MESA_VERSION"
 curl -fL --retry 4 --retry-delay 2 \
   "https://archive.mesa3d.org/mesa-${MESA_VERSION}.tar.xz" \
   -o "$WORK/mesa-${MESA_VERSION}.tar.xz"
 echo "$MESA_SHA256  $WORK/mesa-${MESA_VERSION}.tar.xz" | shasum -a 256 -c -
 tar -xJf "$WORK/mesa-${MESA_VERSION}.tar.xz" -C "$WORK"
+
+# Fail with an explicit diagnosis if this compatibility frontend disappears
+# instead of feeding an invalid option to Meson and wasting another full CI run.
+MESA_OPTIONS="$WORK/mesa-$MESA_VERSION/meson_options.txt"
+if [[ ! -f "$MESA_OPTIONS" ]] || ! grep -q "'osmesa'" "$MESA_OPTIONS"; then
+  echo "Mesa $MESA_VERSION does not expose the OSMesa frontend required by Amethyst's current Zink bridge." >&2
+  exit 23
+fi
+if ! grep -q "'zink'" "$MESA_OPTIONS" || ! grep -q "'softpipe'" "$MESA_OPTIONS"; then
+  echo "Mesa $MESA_VERSION does not expose the required Zink + softpipe Gallium driver combination." >&2
+  exit 24
+fi
 
 MVK_SDK="$(find "$WORK/MoltenVK/Package" -type d -name 'MoltenVK.xcframework' -print -quit || true)"
 if [[ -n "$MVK_SDK" ]]; then
@@ -88,11 +104,12 @@ c_link_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-Wl,-dead_strip
 cpp_link_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-Wl,-dead_strip']
 EOF
 
-# Mesa Meson array options use an empty value to mean "no drivers/platforms".
-# Passing the literal string [] is not an empty array and can make Mesa think a
-# native Vulkan driver was selected, which then correctly requires DRI3. For the
-# iOS Zink path Vulkan is supplied by MoltenVK, so no Mesa native Vulkan driver
-# or desktop WSI platform belongs in this build.
+# OSMesa in Mesa 25.0 requires at least one software Gallium driver to build
+# its frontend. Include softpipe only to satisfy that frontend dependency;
+# Amethyst explicitly exports GALLIUM_DRIVER=zink before loading the modern
+# renderer, and Mesa's sw_screen_create() honours that explicit driver first.
+# Vulkan itself is supplied by MoltenVK, so no Mesa native Vulkan driver or
+# desktop WSI platform belongs in this iOS build.
 MESON_ARGS=(
   --cross-file "$WORK/ios-arm64.ini"
   --buildtype release
@@ -106,7 +123,7 @@ MESON_ARGS=(
   -Dgles1=disabled
   -Dgles2=disabled
   -Dosmesa=true
-  -Dgallium-drivers=zink
+  -Dgallium-drivers=softpipe,zink
   -Dvulkan-drivers=
   -Dllvm=disabled
   -Dshared-glapi=enabled
@@ -136,7 +153,12 @@ file "$FRAMEWORKS/libMoltenVK.dylib" "$FRAMEWORKS/libOSMesaModern.8.dylib"
 echo 'MoltenVK version strings:'
 strings "$FRAMEWORKS/libMoltenVK.dylib" | grep -m3 -E 'MoltenVK [0-9]|1\.4\.2' || true
 echo 'Mesa version strings:'
-strings "$FRAMEWORKS/libOSMesaModern.8.dylib" | grep -m3 -E '^Mesa [0-9]|26\.1\.6' || true
+strings "$FRAMEWORKS/libOSMesaModern.8.dylib" | grep -m3 -E '^Mesa [0-9]|25\.0\.7' || true
+echo 'Modern OSMesa linkage:'
 otool -L "$FRAMEWORKS/libOSMesaModern.8.dylib"
+if ! strings "$FRAMEWORKS/libOSMesaModern.8.dylib" | grep -q 'zink'; then
+  echo "Built libOSMesa does not contain Zink symbols/strings; refusing to package a mislabeled software renderer." >&2
+  exit 25
+fi
 
 echo "Enhanced v4 graphics stack build complete."
