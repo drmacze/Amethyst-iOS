@@ -147,6 +147,7 @@ MESON_ARGS=(
   -Dvulkan-drivers=
   -Dllvm=disabled
   -Dshared-glapi=enabled
+  -Dzstd=disabled
   -Dbuild-tests=false
   -Dvalgrind=disabled
   -Dmoltenvk-dir="$MVK_SDK"
