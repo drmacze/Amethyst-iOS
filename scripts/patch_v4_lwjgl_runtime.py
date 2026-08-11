@@ -85,10 +85,17 @@ new_native = '''    NSString *frameworkRoot = [NSBundle.mainBundle.bundlePath st
         // a newer stb/core ABI by accident.
         margv[++margc] = [NSString stringWithFormat:@"-Dorg.lwjgl.librarypath=%@", modernLWJGLNative].UTF8String;
         margv[++margc] = "-Dorg.lwjgl.system.SharedLibraryExtractPath=";
-        NSLog(@"[EnhancedRuntime] modern LWJGL native path=%@", modernLWJGLNative);
+
+        // JDK 24+ warns when unnamed/classpath code calls restricted JNI loading
+        // APIs and a future release may deny the call. Minecraft/LWJGL/launcher
+        // glue intentionally loads signed bundled dylibs, so opt the modern Java
+        // 25 path into native access explicitly instead of relying on the warning
+        // mode remaining permissive forever.
+        margv[++margc] = "--enable-native-access=ALL-UNNAMED";
+        NSLog(@"[EnhancedRuntime] modern LWJGL native path=%@; native access enabled for classpath", modernLWJGLNative);
     }
 '''
-if 'modern LWJGL native path=' not in text:
+if 'native access enabled for classpath' not in text:
     require(old_native in text, "java.library.path line changed")
     text = text.replace(old_native, new_native, 1)
 
@@ -125,4 +132,4 @@ if 'selected LWJGL jar missing' not in text:
     text = text.replace(old_cp, new_cp, 1)
 
 JAVA.write_text(text, encoding="utf-8")
-print("Applied Enhanced v4 dual-LWJGL runtime selector")
+print("Applied Enhanced v4.1 dual-LWJGL runtime selector")
