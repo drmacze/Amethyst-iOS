@@ -75,13 +75,20 @@ if ! grep -q "'zink'" "$MESA_OPTIONS" || ! grep -q "'softpipe'" "$MESA_OPTIONS";
   exit 24
 fi
 
-MVK_SDK="$(find "$WORK/MoltenVK/Package" -type d -name 'MoltenVK.xcframework' -print -quit || true)"
-if [[ -n "$MVK_SDK" ]]; then
-  MVK_SDK="$(dirname "$MVK_SDK")"
-else
-  MVK_SDK="$WORK/MoltenVK"
+# Mesa's moltenvk-dir option expects the MoltenVK SDK root that contains
+# include/, not the dynamic/ XCFramework directory itself. MoltenVK's package
+# layout is Package/Release/MoltenVK/{include,dynamic,static}.
+MVK_SDK="$WORK/MoltenVK/Package/Release/MoltenVK"
+if [[ ! -d "$MVK_SDK/include" ]]; then
+  MVK_SDK="$WORK/MoltenVK/Package/Latest/MoltenVK"
+fi
+if [[ ! -d "$MVK_SDK/include" ]]; then
+  echo "Could not locate MoltenVK SDK include directory. Package tree:" >&2
+  find "$WORK/MoltenVK/Package" -maxdepth 5 -type d | sort | head -200 >&2
+  exit 26
 fi
 echo "Mesa moltenvk-dir: $MVK_SDK"
+find "$MVK_SDK/include" -maxdepth 3 -type f | head -30
 
 cat > "$WORK/ios-arm64.ini" <<EOF
 [binaries]
