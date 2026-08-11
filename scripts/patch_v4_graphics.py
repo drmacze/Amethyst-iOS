@@ -32,7 +32,7 @@ if 'RENDERER_NAME_VK_ZINK_MODERN' not in p:
     p = p.replace(old_keys, new_keys, 1)
 
 old_names = '''        localize(@"preference.title.renderer.debug.mg", nil),\n        localize(@"preference.title.renderer.debug.zink", nil)\n'''
-new_names = '''        localize(@"preference.title.renderer.debug.mg", nil),\n        @"Zink Modern — Mesa 26.1.6 / MoltenVK 1.4.2",\n        @"Zink Legacy — Mesa 21 recovery"\n'''
+new_names = '''        localize(@"preference.title.renderer.debug.mg", nil),\n        @"Zink Modern — Mesa 25.0.7 / MoltenVK 1.4.2",\n        @"Zink Legacy — Mesa 21 recovery"\n'''
 require(old_names in p or 'Zink Modern' in p, 'renderer name list changed')
 if 'Zink Modern' not in p:
     p = p.replace(old_names, new_names, 1)
@@ -43,7 +43,7 @@ j = JAVA.read_text()
 # Keep Auto on the proven MobileGlues baseline; Modern Zink is explicit until real A13
 # on-device validation proves it is safer as an automatic choice.
 anchor = '''    // Preset OpenGL libname\n    const char *glLibName = getenv("POJAV_RENDERER");\n'''
-block = '''    // Enhanced v4: isolate Mesa/Zink caches from MobileGlues and from older\n    // Mesa builds. Never force experimental descriptor modes; Mesa's own `auto`\n    // selector is capability-aware and is the safest default before device data.\n    const char *selectedRendererV4 = getenv("POJAV_RENDERER");\n    if (selectedRendererV4 && !strcmp(selectedRendererV4, RENDERER_NAME_VK_ZINK_MODERN)) {\n        NSString *mesaCache = [NSString stringWithFormat:@"%s/.amethyst/mesa/26.1.6", getenv("POJAV_HOME")];\n        [fm createDirectoryAtPath:mesaCache withIntermediateDirectories:YES attributes:nil error:nil];\n        setenv("MESA_SHADER_CACHE_DIR", mesaCache.UTF8String, 1);\n        setenv("MESA_DISK_CACHE_SINGLE_FILE", "1", 1);\n        setenv("GALLIUM_DRIVER", "zink", 1);\n        setenv("ZINK_DESCRIPTORS", "auto", 1);\n        NSLog(@"[EnhancedGraphics] Zink Modern selected; Mesa cache=%@", mesaCache);\n    }\n\n'''
+block = '''    // Enhanced v4: isolate Mesa/Zink caches from MobileGlues and from older\n    // Mesa builds. Never force experimental descriptor modes; Mesa's own `auto`\n    // selector is capability-aware and is the safest default before device data.\n    const char *selectedRendererV4 = getenv("POJAV_RENDERER");\n    if (selectedRendererV4 && !strcmp(selectedRendererV4, RENDERER_NAME_VK_ZINK_MODERN)) {\n        NSString *mesaCache = [NSString stringWithFormat:@"%s/.amethyst/mesa/25.0.7", getenv("POJAV_HOME")];\n        [fm createDirectoryAtPath:mesaCache withIntermediateDirectories:YES attributes:nil error:nil];\n        setenv("MESA_SHADER_CACHE_DIR", mesaCache.UTF8String, 1);\n        setenv("MESA_DISK_CACHE_SINGLE_FILE", "1", 1);\n        setenv("GALLIUM_DRIVER", "zink", 1);\n        setenv("ZINK_DESCRIPTORS", "auto", 1);\n        NSLog(@"[EnhancedGraphics] Zink Modern selected; Mesa cache=%@", mesaCache);\n    }\n\n'''
 if '[EnhancedGraphics] Zink Modern selected' not in j:
     require(anchor in j, 'OpenGL library anchor missing')
     j = j.replace(anchor, block + anchor, 1)
