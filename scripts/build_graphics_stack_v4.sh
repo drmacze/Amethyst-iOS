@@ -63,8 +63,6 @@ curl -fL --retry 4 --retry-delay 2 \
 echo "$MESA_SHA256  $WORK/mesa-${MESA_VERSION}.tar.xz" | shasum -a 256 -c -
 tar -xJf "$WORK/mesa-${MESA_VERSION}.tar.xz" -C "$WORK"
 
-# Fail with an explicit diagnosis if this compatibility frontend disappears
-# instead of feeding an invalid option to Meson and wasting another full CI run.
 MESA_OPTIONS="$WORK/mesa-$MESA_VERSION/meson_options.txt"
 if [[ ! -f "$MESA_OPTIONS" ]] || ! grep -q "'osmesa'" "$MESA_OPTIONS"; then
   echo "Mesa $MESA_VERSION does not expose the OSMesa frontend required by Amethyst's current Zink bridge." >&2
@@ -75,18 +73,34 @@ if ! grep -q "'zink'" "$MESA_OPTIONS" || ! grep -q "'softpipe'" "$MESA_OPTIONS";
   exit 24
 fi
 
-MVK_SDK="$(find "$WORK/MoltenVK/Package" -type d -name 'MoltenVK.xcframework' -print -quit || true)"
-if [[ -n "$MVK_SDK" ]]; then
-  MVK_SDK="$(dirname "$MVK_SDK")"
-else
-  MVK_SDK="$WORK/MoltenVK"
+# Mesa's moltenvk-dir option expects the MoltenVK SDK root that contains
+# include/, not the dynamic/ XCFramework directory itself. MoltenVK's package
+# layout is Package/Release/MoltenVK/{include,dynamic,static}.
+MVK_SDK="$WORK/MoltenVK/Package/Release/MoltenVK"
+if [[ ! -d "$MVK_SDK/include" ]]; then
+  MVK_SDK="$WORK/MoltenVK/Package/Latest/MoltenVK"
+fi
+if [[ ! -d "$MVK_SDK/include" ]]; then
+  echo "Could not locate MoltenVK SDK include directory. Package tree:" >&2
+  find "$WORK/MoltenVK/Package" -maxdepth 5 -type d | sort | head -200 >&2
+  exit 26
 fi
 echo "Mesa moltenvk-dir: $MVK_SDK"
+find "$MVK_SDK/include" -maxdepth 3 -type f | head -30
+
+# Mesa's generated Vulkan dispatch table contains both the legacy MoltenVK iOS
+# surface entry points and the modern VK_EXT_metal_surface / metal-objects entry
+# points. Vulkan headers expose those declarations only when these platform guard
+# macros are enabled. Keep them target-wide so every generated Zink TU sees the
+# same Vulkan ABI declarations.
+VK_IOS_DEFINES="-DVK_USE_PLATFORM_IOS_MVK -DVK_USE_PLATFORM_METAL_EXT"
 
 cat > "$WORK/ios-arm64.ini" <<EOF
 [binaries]
 c = ['xcrun', '--sdk', 'iphoneos', 'clang']
 cpp = ['xcrun', '--sdk', 'iphoneos', 'clang++']
+objc = ['xcrun', '--sdk', 'iphoneos', 'clang']
+objcpp = ['xcrun', '--sdk', 'iphoneos', 'clang++']
 ar = ['xcrun', '--sdk', 'iphoneos', 'ar']
 strip = ['xcrun', '--sdk', 'iphoneos', 'strip']
 pkg-config = 'pkg-config'
@@ -98,10 +112,14 @@ cpu = 'arm64'
 endian = 'little'
 
 [built-in options]
-c_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-mcpu=apple-a13', '-O3']
-cpp_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-mcpu=apple-a13', '-O3']
+c_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-mcpu=apple-a13', '-O3', '-DVK_USE_PLATFORM_IOS_MVK', '-DVK_USE_PLATFORM_METAL_EXT']
+cpp_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-mcpu=apple-a13', '-O3', '-DVK_USE_PLATFORM_IOS_MVK', '-DVK_USE_PLATFORM_METAL_EXT']
+objc_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-mcpu=apple-a13', '-O3', '-DVK_USE_PLATFORM_IOS_MVK', '-DVK_USE_PLATFORM_METAL_EXT']
+objcpp_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-mcpu=apple-a13', '-O3', '-DVK_USE_PLATFORM_IOS_MVK', '-DVK_USE_PLATFORM_METAL_EXT']
 c_link_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-Wl,-dead_strip']
 cpp_link_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-Wl,-dead_strip']
+objc_link_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-Wl,-dead_strip']
+objcpp_link_args = ['-arch', 'arm64', '-miphoneos-version-min=15.0', '-Wl,-dead_strip']
 EOF
 
 # OSMesa in Mesa 25.0 requires at least one software Gallium driver to build
@@ -109,7 +127,9 @@ EOF
 # Amethyst explicitly exports GALLIUM_DRIVER=zink before loading the modern
 # renderer, and Mesa's sw_screen_create() honours that explicit driver first.
 # Vulkan itself is supplied by MoltenVK, so no Mesa native Vulkan driver or
-# desktop WSI platform belongs in this iOS build.
+# desktop WSI platform belongs in this iOS build. Zstd is disabled because a
+# host Homebrew zstd must never be linked into an iOS dylib; the system zlib
+# fallback remains available for cache compression.
 MESON_ARGS=(
   --cross-file "$WORK/ios-arm64.ini"
   --buildtype release
@@ -127,6 +147,7 @@ MESON_ARGS=(
   -Dvulkan-drivers=
   -Dllvm=disabled
   -Dshared-glapi=enabled
+  -Dzstd=disabled
   -Dbuild-tests=false
   -Dvalgrind=disabled
   -Dmoltenvk-dir="$MVK_SDK"
@@ -151,12 +172,22 @@ done
 printf '\n=== Enhanced v4 graphics binary verification ===\n'
 file "$FRAMEWORKS/libMoltenVK.dylib" "$FRAMEWORKS/libOSMesaModern.8.dylib"
 echo 'MoltenVK version strings:'
-strings "$FRAMEWORKS/libMoltenVK.dylib" | grep -m3 -E 'MoltenVK [0-9]|1\.4\.2' || true
+MVK_STRINGS="$WORK/moltenvk.strings"
+strings "$FRAMEWORKS/libMoltenVK.dylib" > "$MVK_STRINGS"
+grep -m3 -E 'MoltenVK [0-9]|1\.4\.2' "$MVK_STRINGS" || true
+
 echo 'Mesa version strings:'
-strings "$FRAMEWORKS/libOSMesaModern.8.dylib" | grep -m3 -E '^Mesa [0-9]|25\.0\.7' || true
+MESA_STRINGS="$WORK/mesa-modern.strings"
+strings "$FRAMEWORKS/libOSMesaModern.8.dylib" > "$MESA_STRINGS"
+grep -m3 -E '^Mesa [0-9]|25\.0\.7' "$MESA_STRINGS" || true
+
 echo 'Modern OSMesa linkage:'
 otool -L "$FRAMEWORKS/libOSMesaModern.8.dylib"
-if ! strings "$FRAMEWORKS/libOSMesaModern.8.dylib" | grep -q 'zink'; then
+
+# Do not pipe `strings` directly into grep -q under pipefail: grep intentionally
+# exits after the first match and can SIGPIPE `strings`, which falsely turns a
+# successful Zink build into a verification failure. Inspect the completed dump.
+if ! grep -qi 'zink' "$MESA_STRINGS"; then
   echo "Built libOSMesa does not contain Zink symbols/strings; refusing to package a mislabeled software renderer." >&2
   exit 25
 fi
