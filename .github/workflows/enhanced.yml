@@ -1,9 +1,13 @@
-name: Amethyst Enhanced v4 A13
+name: Amethyst Enhanced v4.1 A13
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - enhanced/v4.1-stability
   pull_request:
     branches:
+      - enhanced/v4
       - enhanced/v3
       - main
 
@@ -11,12 +15,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: amethyst-enhanced-v4-${{ github.workflow }}-${{ github.ref }}
+  group: amethyst-enhanced-v4-1-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   MOBILEGLUES_COMMIT: fbc4e412e353302607ba36489b2dd573b5becb25
-  MESA_VERSION: 26.1.6
+  MESA_VERSION: 25.0.7
+  MESA_FUTURE_VERSION: 26.1.6
   MOLTENVK_VERSION: 1.4.2
   ANGLE_CHROMIUM_BRANCH: chromium/7871
   LWJGL_IOS_BRANCH: wip/rebase_3.4.1
@@ -24,7 +29,7 @@ env:
 
 jobs:
   build-ios:
-    name: Build Amethyst Enhanced v4 (A13 arm64)
+    name: Build Amethyst Enhanced v4.1 (A13 arm64)
     runs-on: macos-26
     timeout-minutes: 300
 
@@ -55,6 +60,29 @@ jobs:
           env | grep -E '^JAVA_HOME_(8|25)_' || true
           xcodebuild -version
 
+      - name: Validate pinned graphics policy
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          manifest = json.loads(Path('Natives/resources/graphics-stack-v4.json').read_text())
+          build_script = Path('scripts/build_graphics_stack_v4.sh').read_text()
+          integration = Path('scripts/patch_v4_graphics.py').read_text()
+          docs = Path('ENHANCED.md').read_text()
+
+          assert manifest['mesaModern']['version'] == '25.0.7', manifest['mesaModern']
+          assert manifest['mesaFuture']['version'] == '26.1.6', manifest['mesaFuture']
+          assert 'MESA_VERSION="25.0.7"' in build_script
+          assert 'Mesa 25.0.7 / MoltenVK 1.4.2' in integration
+          assert '/.amethyst/mesa/25.0.7' in integration
+          assert 'Mesa 25.0.7' in docs
+          assert 'Mesa 26.1.6' in docs
+          print('Graphics policy is internally consistent: shipping Mesa 25.0.7; 26.1.6 deferred.')
+          PY
+
       - name: Pin MobileGlues core and nested dependencies
         shell: bash
         run: |
@@ -81,7 +109,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Amethyst-Enhanced-v4-graphics-build-log
+          name: Amethyst-Enhanced-v4.1-graphics-build-log
           path: graphics-build.log
           if-no-files-found: warn
           retention-days: 7
@@ -102,7 +130,7 @@ jobs:
       - name: Add Enhanced safe cache manager
         run: python3 scripts/patch_cache_manager_v31.py
 
-      - name: Apply Enhanced v4 graphics integration
+      - name: Apply Enhanced v4.1 graphics integration
         run: python3 scripts/patch_v4_graphics.py
 
       - name: Apply Enhanced v4 adaptive performance policy
@@ -117,7 +145,7 @@ jobs:
       - name: Apply Enhanced v4 dual-LWJGL selector
         run: python3 scripts/patch_v4_lwjgl_runtime.py
 
-      - name: Verify v4 build inputs
+      - name: Verify v4.1 build inputs
         shell: bash
         run: |
           set -euxo pipefail
@@ -126,8 +154,10 @@ jobs:
           grep -n -- "-mcpu=apple-a13" Makefile Natives/CMakeLists.txt
           grep -nF "add_compile_options(-O3)" Natives/external/MobileGlues/MobileGlues-cpp/CMakeLists.txt
           grep -n "Zink Modern" Natives/LauncherPreferences.m
+          grep -n "Mesa 25.0.7" Natives/LauncherPreferences.m
           grep -n "RENDERER_NAME_VK_ZINK_MODERN" Natives/utils.h
           grep -n "EnhancedGraphics" Natives/JavaLauncher.m
+          grep -n "Zink Legacy selected (recovery-only)" Natives/JavaLauncher.m
           grep -n "EnhancedPerformance" Natives/JavaLauncher.m
           grep -n "performance_profile" Natives/PLPreferences.m Natives/LauncherPreferencesViewController.m
           grep -n "thermal_governor" Natives/PLPreferences.m Natives/LauncherPreferencesViewController.m
@@ -145,7 +175,9 @@ jobs:
           grep -n "EnhancedMemory" Natives/JavaLauncher.m
           grep -n "performPendingRendererCacheCleanup" Natives/JavaLauncher.m
           grep -n "EnhancedUseModernLWJGL" Natives/JavaLauncher.m
-          plutil -p Natives/Info.plist | grep 'Amethyst Enhanced v4'
+          grep -n 'MESA_VERSION="25.0.7"' scripts/build_graphics_stack_v4.sh
+          grep -n '"version": "25.0.7"' Natives/resources/graphics-stack-v4.json
+          plutil -p Natives/Info.plist | grep 'Amethyst Enhanced v4.1'
           file Natives/resources/Frameworks/libMoltenVK.dylib
           file Natives/resources/Frameworks/libOSMesaModern.8.dylib
           file Natives/resources/Frameworks/libEGL.framework/libEGL
@@ -165,35 +197,35 @@ jobs:
           test -x "$BOOTJDK/javac"
           gmake -j"$(sysctl -n hw.logicalcpu)" dsym package PLATFORM=2 RELEASE=1 BOOTJDK="$BOOTJDK"
 
-      - name: Verify and name v4 artifact
+      - name: Verify and name v4.1 artifact
         shell: bash
         run: |
           set -euxo pipefail
           IPA="$(find artifacts -maxdepth 1 -type f -name 'org.angelauramc.amethyst-*-ios.ipa' | head -n 1)"
           test -n "$IPA"
           test -s "$IPA"
-          cp "$IPA" artifacts/Amethyst-Enhanced-v4-A13-iOS.ipa
-          shasum -a 256 artifacts/Amethyst-Enhanced-v4-A13-iOS.ipa | tee artifacts/Amethyst-Enhanced-v4-A13-iOS.sha256
-          unzip -l artifacts/Amethyst-Enhanced-v4-A13-iOS.ipa | tee /tmp/v4-ipa.txt >/dev/null
-          grep -q 'Frameworks/libmobileglues.dylib' /tmp/v4-ipa.txt
-          grep -q 'Frameworks/libOSMesaModern.8.dylib' /tmp/v4-ipa.txt
-          grep -q 'Frameworks/libOSMesa.8.dylib' /tmp/v4-ipa.txt
-          grep -q 'Frameworks/libMoltenVK.dylib' /tmp/v4-ipa.txt
-          grep -q 'Frameworks/libEGL.framework/libEGL' /tmp/v4-ipa.txt
-          grep -q 'Frameworks/libGLESv2.framework/libGLESv2' /tmp/v4-ipa.txt
-          grep -q 'Frameworks/lwjgl-modern/liblwjgl_spvc.dylib' /tmp/v4-ipa.txt
-          grep -q 'libs/lwjgl-modern-3.4.1.jar' /tmp/v4-ipa.txt
-          grep -q 'libs/lwjgl-legacy.jar' /tmp/v4-ipa.txt
-          grep -q 'graphics-stack-v4.json' /tmp/v4-ipa.txt
-          ls -lh artifacts/Amethyst-Enhanced-v4-A13-iOS.ipa
+          cp "$IPA" artifacts/Amethyst-Enhanced-v4.1-A13-iOS.ipa
+          shasum -a 256 artifacts/Amethyst-Enhanced-v4.1-A13-iOS.ipa | tee artifacts/Amethyst-Enhanced-v4.1-A13-iOS.sha256
+          unzip -l artifacts/Amethyst-Enhanced-v4.1-A13-iOS.ipa | tee /tmp/v4-1-ipa.txt >/dev/null
+          grep -q 'Frameworks/libmobileglues.dylib' /tmp/v4-1-ipa.txt
+          grep -q 'Frameworks/libOSMesaModern.8.dylib' /tmp/v4-1-ipa.txt
+          grep -q 'Frameworks/libOSMesa.8.dylib' /tmp/v4-1-ipa.txt
+          grep -q 'Frameworks/libMoltenVK.dylib' /tmp/v4-1-ipa.txt
+          grep -q 'Frameworks/libEGL.framework/libEGL' /tmp/v4-1-ipa.txt
+          grep -q 'Frameworks/libGLESv2.framework/libGLESv2' /tmp/v4-1-ipa.txt
+          grep -q 'Frameworks/lwjgl-modern/liblwjgl_spvc.dylib' /tmp/v4-1-ipa.txt
+          grep -q 'libs/lwjgl-modern-3.4.1.jar' /tmp/v4-1-ipa.txt
+          grep -q 'libs/lwjgl-legacy.jar' /tmp/v4-1-ipa.txt
+          grep -q 'graphics-stack-v4.json' /tmp/v4-1-ipa.txt
+          ls -lh artifacts/Amethyst-Enhanced-v4.1-A13-iOS.ipa
 
-      - name: Upload Amethyst Enhanced v4 IPA
+      - name: Upload Amethyst Enhanced v4.1 IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Amethyst-Enhanced-v4-A13-iOS
+          name: Amethyst-Enhanced-v4.1-A13-iOS
           path: |
-            artifacts/Amethyst-Enhanced-v4-A13-iOS.ipa
-            artifacts/Amethyst-Enhanced-v4-A13-iOS.sha256
+            artifacts/Amethyst-Enhanced-v4.1-A13-iOS.ipa
+            artifacts/Amethyst-Enhanced-v4.1-A13-iOS.sha256
           if-no-files-found: error
           retention-days: 14
 
@@ -201,7 +233,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Amethyst-Enhanced-v4-dSYM
+          name: Amethyst-Enhanced-v4.1-dSYM
           path: artifacts/AngelAuraAmethyst.dSYM
           if-no-files-found: ignore
           retention-days: 7
